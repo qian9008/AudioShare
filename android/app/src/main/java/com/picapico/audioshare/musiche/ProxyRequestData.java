@@ -12,6 +12,7 @@ public class ProxyRequestData {
     private String data = "";
     private final Map<String, String> headers = new HashMap<>();
     private boolean allowAutoRedirect = true;
+    private String httpProxy = "";
 
     public static ProxyRequestData of(Object json){
         try{
@@ -28,6 +29,9 @@ public class ProxyRequestData {
             }
             if(jsonObject.has("allowAutoRedirect")){
                 proxyRequestData.setAllowAutoRedirect(jsonObject.getBoolean("allowAutoRedirect"));
+            }
+            if(jsonObject.has("httpProxy")){
+                proxyRequestData.setHttpProxy(jsonObject.getString("httpProxy"));
             }
             if(jsonObject.has("headers")){
                 JSONObject headersJson = jsonObject.getJSONObject("headers");
@@ -81,5 +85,13 @@ public class ProxyRequestData {
 
     public void setAllowAutoRedirect(boolean allowAutoRedirect) {
         this.allowAutoRedirect = allowAutoRedirect;
+    }
+
+    public String getHttpProxy() {
+        return httpProxy;
+    }
+
+    public void setHttpProxy(String httpProxy) {
+        this.httpProxy = httpProxy;
     }
 }
