@@ -2,6 +2,8 @@ name: Deploy static content to Pages
 
 on:
   push:
+    branches:
+      - master
     tags:
       - 'v*.*.*'
 
@@ -26,10 +28,17 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v1
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
       - name: Setup Pages
         uses: actions/setup-node@v3
         with:
           node-version: 22
+          cache: 'pnpm'
+          cache-dependency-path: 'musiche/web/pnpm-lock.yaml'
 
       - name: Setup JDK 17
         uses: actions/setup-java@v3
@@ -37,13 +46,18 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
           cache: gradle
+          cache-dependency-path: |
+            android/build.gradle
+            android/app/build.gradle
+            android/settings.gradle
+            android/gradle/wrapper/gradle-wrapper.properties
 
       - name: Build
         run: |
           powershell
           cd musiche/web
-          yarn
-          yarn build
+          pnpm install --frozen-lockfile
+          pnpm run build
           cd ..\..
           copy musiche\web\dist android\app\src\main\assets -Recurse
           cd windows
@@ -51,7 +65,7 @@ jobs:
           msbuild AudioShare.sln -t:"Restore;Build" /p:Configuration=Release /p:Platform="Any CPU"
           msbuild AudioShare.sln -t:"Restore;Build;Publish" /p:Configuration=Release /p:Platform="Any CPU" /p:PublishProfile="Properties\PublishProfiles\net6.0.pubxml" /p:TargetFramework=net6.0-windows10.0.17763.0
           cd ../android
-          .\gradlew.bat build
+          .\gradlew.bat assembleRelease
           cd ..
           copy windows\bin\Release\net462\AudioShare.exe AudioShare.exe
           copy android\app\build\outputs\apk\release\app-release.apk AudioShare.apk

@@ -71,6 +71,8 @@ public class AudioPlayer implements OnActionReceiveListener, IMediaPlayer.Listen
     private int volume = 100;
     private boolean stopped = true;
     private String url = "";
+    private String mCurrentMusicId = "";
+    private String mCurrentMusicType = "";
     //endregion
     public AudioPlayer(Context context){
         mediaPlayer = new ExoPlayer(context);
@@ -291,9 +293,16 @@ public class AudioPlayer implements OnActionReceiveListener, IMediaPlayer.Listen
     }
 
     public void play(){
-        if(mediaPlayer.getDuration() > 0) {
-            mediaPlayer.play();
-            return;
+        if(this.mMusicPlayRequest != null && this.mMusicPlayRequest.getMusic() != null) {
+            MusicItem reqMusic = this.mMusicPlayRequest.getMusic();
+            if(reqMusic.getId() != null && reqMusic.getType() != null
+                    && reqMusic.getId().equals(mCurrentMusicId)
+                    && reqMusic.getType().equals(mCurrentMusicType)) {
+                if(mediaPlayer.getDuration() > 0) {
+                    mediaPlayer.play();
+                    return;
+                }
+            }
         }
         if(this.mMusicPlayRequest != null){
             play(this.mMusicPlayRequest.getMusic());
@@ -313,6 +322,8 @@ public class AudioPlayer implements OnActionReceiveListener, IMediaPlayer.Listen
                 mMusicPlayRequest = new MusicPlayRequest();
             }
             mMusicPlayRequest.setMusic(musicItem);
+            mCurrentMusicId = musicItem.getId();
+            mCurrentMusicType = musicItem.getType();
         }
         play(uri);
         mediaPlayer.setSeekDiscontinuity(true);
@@ -339,6 +350,8 @@ public class AudioPlayer implements OnActionReceiveListener, IMediaPlayer.Listen
     public void play(MusicItem musicItem){
         remote = false;
         if(musicItem == null) return;
+        mCurrentMusicId = musicItem.getId();
+        mCurrentMusicType = musicItem.getType();
         if(this.mMusicPlayRequest != null){
             lastIndex = this.mMusicPlayRequest.getIndex();
             this.mMusicPlayRequest.setMusic(musicItem);
