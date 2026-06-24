@@ -68,6 +68,7 @@ public class HttpServer implements AudioPlayer.OnChangedListener {
         mServerPort = port;
         mContext = context;
         mAudioPlayer = new AudioPlayer(context);
+        mAudioPlayer.setServerPort(port);
         initDeviceName();
     }
 

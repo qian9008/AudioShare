@@ -88,6 +88,7 @@ public class MusicItem {
                 }
 
                 URL url = new URL(urlStr);
+                Log.i(TAG, "executeRequest API URL: " + urlStr + ", Proxy: [" + httpProxy + "]");
                 if (!httpProxy.isEmpty()) {
                     String proxyHost = "";
                     int proxyPort = 80;
@@ -103,9 +104,11 @@ public class MusicItem {
                     if (parts.length > 1) {
                         proxyPort = Integer.parseInt(parts[1].replaceAll("[^\\d]", ""));
                     }
+                    Log.i(TAG, "Connecting API via proxy -> Host: " + proxyHost + ", Port: " + proxyPort);
                     java.net.Proxy javaProxy = new java.net.Proxy(java.net.Proxy.Type.HTTP, new java.net.InetSocketAddress(proxyHost, proxyPort));
                     conn = (java.net.HttpURLConnection) url.openConnection(javaProxy);
                 } else {
+                    Log.i(TAG, "Connecting API directly without proxy");
                     conn = (java.net.HttpURLConnection) url.openConnection();
                 }
 
@@ -169,6 +172,7 @@ public class MusicItem {
                 new Handler(Looper.getMainLooper()).post(() -> callback.onCompleted(null, finalResponse));
 
             } catch (Exception e) {
+                Log.e(TAG, "executeRequest URL failed: " + urlStr, e);
                 new Handler(Looper.getMainLooper()).post(() -> callback.onCompleted(e, null));
             } finally {
                 if (conn != null) conn.disconnect();

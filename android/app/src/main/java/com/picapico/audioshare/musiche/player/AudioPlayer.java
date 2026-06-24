@@ -2,6 +2,7 @@ package com.picapico.audioshare.musiche.player;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.media.AudioManager;
 import android.util.Log;
 
@@ -74,6 +75,7 @@ public class AudioPlayer implements OnActionReceiveListener, IMediaPlayer.Listen
     private String url = "";
     private String mCurrentMusicId = "";
     private String mCurrentMusicType = "";
+    private int mServerPort = 0;
     //endregion
     public AudioPlayer(Context context){
         mContext = context;
@@ -81,6 +83,9 @@ public class AudioPlayer implements OnActionReceiveListener, IMediaPlayer.Listen
         mediaPlayer.setMediaChangedListener(this);
         mNotificationCallback = new NotificationCallback();
         mNotificationCallback.setOnActionReceiveListener(this);
+    }
+    public void setServerPort(int port) {
+        this.mServerPort = port;
     }
     //region Public method
     public void setChannel(@ChannelType int channel) {
@@ -337,9 +342,29 @@ public class AudioPlayer implements OnActionReceiveListener, IMediaPlayer.Listen
             pause();
             return;
         }
+        String playUrl = uri;
+        if (mContext != null && mServerPort > 0) {
+            SharedPreferences sp = mContext.getSharedPreferences("config", Context.MODE_PRIVATE);
+            String httpProxy = sp.getString("musiche-http-proxy", "").trim();
+            if (httpProxy.startsWith("\"") && httpProxy.endsWith("\"")) {
+                httpProxy = httpProxy.substring(1, httpProxy.length() - 1);
+            }
+            httpProxy = httpProxy.trim();
+            if (!httpProxy.isEmpty()) {
+                String lowerUrl = uri.toLowerCase();
+                if (!lowerUrl.startsWith("http://127.0.0.1") && !lowerUrl.startsWith("http://localhost")) {
+                    try {
+                        playUrl = "http://127.0.0.1:" + mServerPort + "/proxy?url=" + java.net.URLEncoder.encode(uri, "UTF-8");
+                        Log.i(TAG, "Wrapped play URL for proxy: " + playUrl);
+                    } catch (Exception e) {
+                        Log.e(TAG, "Failed to encode music URL", e);
+                    }
+                }
+            }
+        }
         mediaPlayer.setSeekDiscontinuity(false);
-        mediaPlayer.play(uri);
-        this.url = uri;
+        mediaPlayer.play(playUrl);
+        this.url = playUrl;
         if(mAudioManager != null){
             volume = mAudioManager.getStreamVolume(AudioManager.STREAM_MUSIC)*100/maxAudioVolume;
         }
