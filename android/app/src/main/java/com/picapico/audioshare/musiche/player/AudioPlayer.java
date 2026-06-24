@@ -350,15 +350,15 @@ public class AudioPlayer implements OnActionReceiveListener, IMediaPlayer.Listen
                 httpProxy = httpProxy.substring(1, httpProxy.length() - 1);
             }
             httpProxy = httpProxy.trim();
-            if (!httpProxy.isEmpty()) {
-                String lowerUrl = uri.toLowerCase();
-                if (!lowerUrl.startsWith("http://127.0.0.1") && !lowerUrl.startsWith("http://localhost")) {
-                    try {
-                        playUrl = "http://127.0.0.1:" + mServerPort + "/proxy?url=" + java.net.URLEncoder.encode(uri, "UTF-8");
-                        Log.i(TAG, "Wrapped play URL for proxy: " + playUrl);
-                    } catch (Exception e) {
-                        Log.e(TAG, "Failed to encode music URL", e);
-                    }
+            String lowerUrl = uri.toLowerCase();
+            boolean isHttp = lowerUrl.startsWith("http://") && !lowerUrl.startsWith("http://127.0.0.1") && !lowerUrl.startsWith("http://localhost");
+            boolean hasProxy = !httpProxy.isEmpty();
+            if (hasProxy || isHttp) {
+                try {
+                    playUrl = "http://127.0.0.1:" + mServerPort + "/proxy?url=" + java.net.URLEncoder.encode(uri, "UTF-8");
+                    Log.i(TAG, "Wrapped play URL (hasProxy=" + hasProxy + ", isHttp=" + isHttp + "): " + playUrl);
+                } catch (Exception e) {
+                    Log.e(TAG, "Failed to encode music URL", e);
                 }
             }
         }
