@@ -16,4 +16,8 @@
 
 ### 3. CI/CD 构建与产物分发 (GitHub Actions)
 * **配置文件**：[.github/workflows/release.yml](file:///d:/Users/Documents/1/airplay/audioshare/.github/workflows/release.yml)
-* **构建产物上传**：加入了 `actions/upload-artifact@v4` 步骤。如今每次对 master 的推送（Push）行为，即使不推送 Tag 触发 Release 发布，也能自动在 GitHub Action 的每一次运行历史（Runs）的 Summary 页面下方提供已打包的构建产物（`AudioShare-Builds.zip`），包含编译好的 APK 和 EXE，极大地方便了日常的开发与测试。
+* **构建产物上传**：加入了 `actions/upload-artifact@v7` 步骤。如今每次对 master 的推送（Push）行为，即使不推送 Tag 触发 Release 发布，也能自动在 GitHub Action 的每一次运行历史（Runs）的 Summary 页面下方提供已打包的构建产物（`AudioShare-Builds.zip`），包含编译好的 APK 和 EXE，极大方便了日常的开发与测试。
+* **构建缓存与依赖对齐**：
+  * 将 `release.yml` 的通用 Actions 库版本（如 `checkout@v6`、`setup-node@v6`、`setup-java@v5`、`action-gh-release@v3`）全面与项目自带的 [web.yml](file:///d:/Users/Documents/1/airplay/audioshare/musiche/.github/workflows/web.yml) 对齐。
+  * 使用专用的官方 `gradle/actions/setup-gradle@v4` 取代了 `setup-java` 内置的简易缓存，为 Windows 平台下的 Gradle 依赖与构建提供更专业、可靠的缓存机制。
+  * 将 Gradle 编译命令调整为 `.\gradlew.bat assembleRelease --no-daemon`，强制在编译完成后销毁 Gradle 进程。这彻底解决了由于 Windows 文件系统上常驻守护进程（Daemon）锁死缓存目录引发的权限占用（Permission Denied），确保缓存能每次都在构建结束时成功保存。
