@@ -16,6 +16,13 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Pull latest musiche master
+        run: |
+          cd musiche
+          git fetch origin master
+          git checkout -f FETCH_HEAD
+          cd ..
+
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v1
 
