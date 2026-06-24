@@ -19,6 +19,10 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
+import android.content.Context;
+import android.content.SharedPreferences;
+import android.os.Handler;
+import android.os.Looper;
 
 import javax.crypto.Cipher;
 import javax.crypto.spec.IvParameterSpec;
@@ -63,17 +67,126 @@ public class MusicItem {
     public interface onUrlLoadedCallback {
         void onUrlLoaded(String url);
     }
-    public void getMusicUrl(Quality quality, onUrlLoadedCallback callback){
+    
+    private interface HttpRequestCallback {
+        void onCompleted(Exception e, String result);
+    }
+
+    private static void executeRequest(Context context, String urlStr, String method, String body, Map<String, String> headers, HttpRequestCallback callback) {
+        new Thread(() -> {
+            java.net.HttpURLConnection conn = null;
+            try {
+                String httpProxy = "";
+                if (context != null) {
+                    SharedPreferences sp = context.getSharedPreferences("config", Context.MODE_PRIVATE);
+                    httpProxy = sp.getString("musiche-http-proxy", "").trim();
+                    if (httpProxy.startsWith("\"") && httpProxy.endsWith("\"")) {
+                        httpProxy = httpProxy.substring(1, httpProxy.length() - 1);
+                    }
+                    httpProxy = httpProxy.trim();
+                }
+
+                URL url = new URL(urlStr);
+                if (!httpProxy.isEmpty()) {
+                    String proxyHost = "";
+                    int proxyPort = 80;
+                    String temp = httpProxy;
+                    if (temp.startsWith("http://")) {
+                        temp = temp.substring(7);
+                    } else if (temp.startsWith("https://")) {
+                        temp = temp.substring(8);
+                    }
+                    temp = temp.split("/")[0].trim();
+                    String[] parts = temp.split(":");
+                    proxyHost = parts[0];
+                    if (parts.length > 1) {
+                        proxyPort = Integer.parseInt(parts[1].replaceAll("[^\\d]", ""));
+                    }
+                    java.net.Proxy javaProxy = new java.net.Proxy(java.net.Proxy.Type.HTTP, new java.net.InetSocketAddress(proxyHost, proxyPort));
+                    conn = (java.net.HttpURLConnection) url.openConnection(javaProxy);
+                } else {
+                    conn = (java.net.HttpURLConnection) url.openConnection();
+                }
+
+                conn.setRequestMethod(method);
+                conn.setConnectTimeout(10000);
+                conn.setReadTimeout(10000);
+
+                if (conn instanceof javax.net.ssl.HttpsURLConnection) {
+                    javax.net.ssl.TrustManager[] trustAllCerts = new javax.net.ssl.TrustManager[]{
+                        new javax.net.ssl.X509TrustManager() {
+                            public java.security.cert.X509Certificate[] getAcceptedIssuers() { return null; }
+                            public void checkClientTrusted(java.security.cert.X509Certificate[] certs, String authType) {}
+                            public void checkServerTrusted(java.security.cert.X509Certificate[] certs, String authType) {}
+                        }
+                    };
+                    javax.net.ssl.SSLContext sc = javax.net.ssl.SSLContext.getInstance("TLS");
+                    sc.init(null, trustAllCerts, new java.security.SecureRandom());
+                    ((javax.net.ssl.HttpsURLConnection) conn).setSSLSocketFactory(sc.getSocketFactory());
+                    ((javax.net.ssl.HttpsURLConnection) conn).setHostnameVerifier((hostname, session) -> true);
+                }
+
+                if (headers != null) {
+                    for (Map.Entry<String, String> entry : headers.entrySet()) {
+                        conn.setRequestProperty(entry.getKey(), entry.getValue());
+                    }
+                }
+
+                if (body != null && !body.isEmpty()) {
+                    conn.setDoOutput(true);
+                    java.io.OutputStream os = conn.getOutputStream();
+                    os.write(body.getBytes("UTF-8"));
+                    os.flush();
+                    os.close();
+                }
+
+                int code = conn.getResponseCode();
+                java.io.InputStream is;
+                if (code >= 400) {
+                    is = conn.getErrorStream();
+                } else {
+                    is = conn.getInputStream();
+                }
+
+                String responseStr = "";
+                if (is != null) {
+                    String encoding = conn.getContentEncoding();
+                    if (encoding != null && encoding.toLowerCase().contains("gzip")) {
+                        is = new java.util.zip.GZIPInputStream(is);
+                    }
+                    java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(is, "UTF-8"));
+                    StringBuilder sb = new StringBuilder();
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        sb.append(line);
+                    }
+                    reader.close();
+                    responseStr = sb.toString();
+                }
+
+                final String finalResponse = responseStr;
+                new Handler(Looper.getMainLooper()).post(() -> callback.onCompleted(null, finalResponse));
+
+            } catch (Exception e) {
+                new Handler(Looper.getMainLooper()).post(() -> callback.onCompleted(e, null));
+            } finally {
+                if (conn != null) conn.disconnect();
+            }
+        }).start();
+    }
+
+    public void getMusicUrl(Context context, Quality quality, onUrlLoadedCallback callback){
         Log.i(TAG, "get play url: " + name + " " + type);
         switch (type){
-            case "cloud": getCloudMusicUrl(quality, callback);break;
-            case "qq": getQQMusicUrl(quality, callback, false);break;
-            case "migu": getMiGuMusicUrl(quality, callback);break;
+            case "cloud": getCloudMusicUrl(context, quality, callback);break;
+            case "qq": getQQMusicUrl(context, quality, callback, false);break;
+            case "migu": getMiGuMusicUrl(context, quality, callback);break;
             default:
                 callback.onUrlLoaded(null);break;
         }
     }
-    private void getCloudMusicUrl(Quality quality, onUrlLoadedCallback callback){
+
+    private void getCloudMusicUrl(Context context, Quality quality, onUrlLoadedCallback callback){
         int br;
         switch (quality){
             case HQ: br = 320000; break;
@@ -92,39 +205,33 @@ public class MusicItem {
         } catch (UnsupportedEncodingException ignore) {
         }
         String paramData = "params=" + param + EncSecKey;
-        try {
-            AsyncHttpRequest request = new AsyncHttpPost(CloudMusicAPI);
-            request.setHeader("Content-Type", "'application/x-www-form-urlencoded'");
-            request.setHeader("Referer", "https://music.163.com");
-            request.setHeader("User-Agent", UserAgent);
-            request.setHeader("Cookie", "os=ios;MUSIC_U="+musicU);
-            request.setBody(new StringBody(paramData));
-            AsyncHttpClient.getDefaultInstance().executeJSONObject(request, new AsyncHttpClient.JSONObjectCallback() {
-                @Override
-                public void onCompleted(Exception e, AsyncHttpResponse source, JSONObject result) {
-                    String url = null;
-                    if(result != null && result.has("data")){
-                        try {
-                            JSONObject obj = result.getJSONArray("data").getJSONObject(0);
-                            if(obj.has("url")) {
-                                url = obj.getString("url").replace("http://", "https://");
-                            }
-                        } catch (JSONException ex) {
-                            Log.e(TAG, "get cloud url error", ex);
+
+        Map<String, String> headers = new HashMap<>();
+        headers.put("Content-Type", "application/x-www-form-urlencoded");
+        headers.put("Referer", "https://music.163.com");
+        headers.put("User-Agent", UserAgent);
+        headers.put("Cookie", "os=ios;MUSIC_U=" + musicU);
+
+        executeRequest(context, CloudMusicAPI, "POST", paramData, headers, (e, resultStr) -> {
+            String url = null;
+            if (resultStr != null && !resultStr.isEmpty()) {
+                try {
+                    JSONObject result = new JSONObject(resultStr);
+                    if (result.has("data")) {
+                        JSONObject obj = result.getJSONArray("data").getJSONObject(0);
+                        if (obj.has("url")) {
+                            url = obj.getString("url").replace("http://", "https://");
                         }
                     }
-                    callback.onUrlLoaded(url);
+                } catch (JSONException ex) {
+                    Log.e(TAG, "get cloud url error", ex);
                 }
-            });
-        }catch (Exception e){
-            Log.e(TAG, "get cloud url error", e);
-            callback.onUrlLoaded(null);
-        }
+            }
+            callback.onUrlLoaded(url);
+        });
     }
-    private static int now(){
-        return (int) (System.currentTimeMillis()/1000);
-    }
-    private void getQQMusicUrl(Quality ignore, onUrlLoadedCallback callback, boolean audition){
+
+    private void getQQMusicUrl(Context context, Quality ignore, onUrlLoadedCallback callback, boolean audition){
         String fileName = "";
         if(audition && remark != null && !remark.isEmpty()){
             fileName = "\"" + remark + "\"";
@@ -139,52 +246,47 @@ public class MusicItem {
                 "\"songmid\":[\"" + id + "\"]," +
                 "\"songtype\":[0],\"uin\":\"\",\"loginflag\":1,\"platform\":\"20\"," +
                 "\"filename\":[" + fileName + "]}}}";
-        try {
-            AsyncHttpRequest request = new AsyncHttpPost("https://u.y.qq.com/cgi-bin/musicu.fcg");
-            request.setHeader("Referer", "https://y.qq.com");
-            request.setHeader("Content-Type", "application/json");
-            request.setHeader("Cookie", cookie);
-            request.setBody(new StringBody(body));
-            AsyncHttpClient.getDefaultInstance().executeJSONObject(request, new AsyncHttpClient.JSONObjectCallback() {
-                @Override
-                public void onCompleted(Exception e, AsyncHttpResponse source, JSONObject result) {
-                    if(result == null) {
-                        callback.onUrlLoaded(null);
-                        return;
-                    }
-                    String musicUrl = null;
-                    try{
-                        JSONObject data = result.getJSONObject("req_0").getJSONObject("data");
-                        String pUrl = data.getJSONArray("midurlinfo").getJSONObject(0).getString("purl");
-                        JSONArray sip = data.getJSONArray("sip");
-                        String urlPrefix = null;
-                        for (int i = 0; i < sip.length(); i++) {
-                            String host = sip.getString(i);
-                            if(host != null && !host.isEmpty()){
-                                urlPrefix = host;
-                                break;
-                            }
-                        }
-                        if(urlPrefix == null){
-                            urlPrefix = "https://dl.stream.qqmusic.qq.com/";
-                        }
-                        if(!pUrl.isEmpty()) musicUrl = urlPrefix + pUrl;
-                    }catch (Exception ex){
-                        Log.e(TAG, "get qq music url error", ex);
-                    }
-                    if(musicUrl == null && !audition){
-                        getQQMusicUrl(ignore, callback, true);
-                    }else {
-                        callback.onUrlLoaded(musicUrl);
+
+        Map<String, String> headers = new HashMap<>();
+        headers.put("Referer", "https://y.qq.com");
+        headers.put("Content-Type", "application/json");
+        headers.put("Cookie", cookie);
+
+        executeRequest(context, "https://u.y.qq.com/cgi-bin/musicu.fcg", "POST", body, headers, (e, resultStr) -> {
+            if (resultStr == null || resultStr.isEmpty()) {
+                callback.onUrlLoaded(null);
+                return;
+            }
+            String musicUrl = null;
+            try {
+                JSONObject result = new JSONObject(resultStr);
+                JSONObject data = result.getJSONObject("req_0").getJSONObject("data");
+                String pUrl = data.getJSONArray("midurlinfo").getJSONObject(0).getString("purl");
+                JSONArray sip = data.getJSONArray("sip");
+                String urlPrefix = null;
+                for (int i = 0; i < sip.length(); i++) {
+                    String host = sip.getString(i);
+                    if (host != null && !host.isEmpty()) {
+                        urlPrefix = host;
+                        break;
                     }
                 }
-            });
-        }catch (Exception e){
-            Log.e(TAG, "get cloud url error", e);
-            callback.onUrlLoaded(null);
-        }
+                if (urlPrefix == null) {
+                    urlPrefix = "https://dl.stream.qqmusic.qq.com/";
+                }
+                if (!pUrl.isEmpty()) musicUrl = urlPrefix + pUrl;
+            } catch (Exception ex) {
+                Log.e(TAG, "get qq music url error", ex);
+            }
+            if (musicUrl == null && !audition) {
+                getQQMusicUrl(context, ignore, callback, true);
+            } else {
+                callback.onUrlLoaded(musicUrl);
+            }
+        });
     }
-    private void getMiGuMusicUrl(Quality quality, onUrlLoadedCallback callback){
+
+    private void getMiGuMusicUrl(Context context, Quality quality, onUrlLoadedCallback callback){
         String toneFlag = "PQ";
         switch (quality){
             case HQ: toneFlag = "HQ"; break;
@@ -198,32 +300,29 @@ public class MusicItem {
                         "&contentId=" + remark +
                         "&copyrightId=" + id +
                         "&lowerQualityContentId=" + id;
-        try {
-            AsyncHttpRequest request = new AsyncHttpGet(requestUrl);
-            request.setHeader("channel", "014000D");
-            request.setHeader("uid", uid);
-            request.setHeader("Cookie", cookie);
-            AsyncHttpClient.getDefaultInstance().executeJSONObject(request, new AsyncHttpClient.JSONObjectCallback() {
-                @Override
-                public void onCompleted(Exception e, AsyncHttpResponse source, JSONObject result) {
-                    String url = null;
-                    if(result != null && result.has("data")){
-                        try {
-                            JSONObject obj = result.getJSONObject("data");
-                            if(obj.has("url")) {
-                                url = obj.getString("url").replace("http://", "https://");
-                            }
-                        } catch (JSONException ex) {
-                            Log.e(TAG, "get cloud url error", ex);
+
+        Map<String, String> headers = new HashMap<>();
+        headers.put("channel", "014000D");
+        headers.put("uid", uid);
+        headers.put("Cookie", cookie);
+
+        executeRequest(context, requestUrl, "GET", null, headers, (e, resultStr) -> {
+            String url = null;
+            if (resultStr != null && !resultStr.isEmpty()) {
+                try {
+                    JSONObject result = new JSONObject(resultStr);
+                    if (result.has("data")) {
+                        JSONObject obj = result.getJSONObject("data");
+                        if (obj.has("url")) {
+                            url = obj.getString("url").replace("http://", "https://");
                         }
                     }
-                    callback.onUrlLoaded(url);
+                } catch (JSONException ex) {
+                    Log.e(TAG, "get cloud url error", ex);
                 }
-            });
-        }catch (Exception e){
-            Log.e(TAG, "get cloud url error", e);
-            callback.onUrlLoaded(null);
-        }
+            }
+            callback.onUrlLoaded(url);
+        });
     }
     private String aesEncrypt(String plain, String key){
         String iv = "0102030405060708";

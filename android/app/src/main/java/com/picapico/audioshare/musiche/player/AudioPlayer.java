@@ -55,6 +55,7 @@ public class AudioPlayer implements OnActionReceiveListener, IMediaPlayer.Listen
     }
     //endregion
     //region Private field
+    private Context mContext = null;
     private @ChannelType int mChannel = ChannelTypeStereo;
 
     private AudioManager mAudioManager = null;
@@ -75,6 +76,7 @@ public class AudioPlayer implements OnActionReceiveListener, IMediaPlayer.Listen
     private String mCurrentMusicType = "";
     //endregion
     public AudioPlayer(Context context){
+        mContext = context;
         mediaPlayer = new ExoPlayer(context);
         mediaPlayer.setMediaChangedListener(this);
         mNotificationCallback = new NotificationCallback();
@@ -363,7 +365,7 @@ public class AudioPlayer implements OnActionReceiveListener, IMediaPlayer.Listen
                 this.mMusicPlayRequest.setIndex(playlist.size() - 1);
             }
         }
-        musicItem.getMusicUrl(quality, musicUrl -> {
+        musicItem.getMusicUrl(mContext, quality, musicUrl -> {
             if(musicUrl == null){
                 this.mMusicPlayRequest.getPlaylist().remove(this.mMusicPlayRequest.getIndex());
                 next();
