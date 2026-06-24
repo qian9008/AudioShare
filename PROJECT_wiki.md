@@ -16,7 +16,7 @@
 
 ### 3. CI/CD 构建与产物分发 (GitHub Actions)
 * **配置文件**：[.github/workflows/release.yml](file:///d:/Users/Documents/1/airplay/audioshare/.github/workflows/release.yml)
-* **构建产物上传**：加入了 `actions/upload-artifact@v7` 步骤。如今每次对 master 的推送（Push）行为，即使不推送 Tag 触发 Release 发布，也能自动在 GitHub Action 的每一次运行历史（Runs）的 Summary 页面下方提供已打包的构建产物（`AudioShare-Builds.zip`），包含编译好的 APK 和 EXE，极大方便了日常的开发与测试。
+* **构建产物分发 (避免打包 zip)**：移除了 `actions/upload-artifact` 步骤，改为在普通 `push` 提交时自动创建或覆盖更新名为 `dev-build` 的 **Prerelease (开发预发布)**。这可以直接在 Releases 页面以原始单文件形式分发 `AudioShare.apk`、`AudioShare.exe` 等产物，彻底避免了 GitHub Actions 本身将产物打包成 `.zip` 压缩包所带来的解压不便。
 * **构建缓存与依赖对齐**：
   * 将 `release.yml` 的通用 Actions 库版本（如 `checkout@v6`、`setup-node@v6`、`setup-java@v5`、`action-gh-release@v3`）全面与项目自带的 [web.yml](file:///d:/Users/Documents/1/airplay/audioshare/musiche/.github/workflows/web.yml) 对齐。
   * 使用专用的官方 `gradle/actions/setup-gradle@v4` 取代了 `setup-java` 内置的简易缓存，为 Windows 平台下的 Gradle 依赖与构建提供更专业、可靠的缓存机制。

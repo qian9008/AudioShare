@@ -76,11 +76,19 @@ jobs:
           copy .\platform-tools\AdbWinUsbApi.dll AdbWinUsbApi.dll
           $ErrorActionPreference = $prevErrorActionPreference
 
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v7
+      - name: Dev Release
+        uses: softprops/action-gh-release@v3
+        if: github.ref == 'refs/heads/master'
         with:
-          name: AudioShare-Builds
-          path: |
+          prerelease: true
+          tag_name: dev-build
+          name: "AudioShare 开发版构建 (Dev Build)"
+          body: |
+            此版本为 Master 分支的自动编译开发版，每次提交后会自动更新。
+            
+            构建时间: ${{ github.event.head_commit.timestamp || github.event.repository.updated_at }}
+            最近提交: ${{ github.event.head_commit.message }}
+          files: |
             AudioShare.apk
             AudioShare.exe
             AudioShare.net6.exe
