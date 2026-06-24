@@ -37,6 +37,19 @@ import java.util.Objects;
 import java.util.Timer;
 import java.util.TimerTask;
 
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
+import javax.net.ssl.HttpsURLConnection;
+import javax.net.ssl.HostnameVerifier;
+import javax.net.ssl.SSLSession;
+import java.security.cert.X509Certificate;
+import java.net.HttpURLConnection;
+import java.net.InetSocketAddress;
+import java.net.Proxy;
+import java.net.URL;
+import java.io.OutputStream;
+
 public class HttpServer implements AudioPlayer.OnChangedListener {
     private static final String TAG = "AudioShareHttpServer";
     private String mVersionName = "";
@@ -319,6 +332,8 @@ public class HttpServer implements AudioPlayer.OnChangedListener {
         mServer.post("/file/directory/music", getMusicDirectory);
         mServer.post("/proxy", proxyPost);
         mServer.get("/proxy", proxyGet);
+        mServer.post("/proxy/test", proxyTest);
+        mServer.get("/proxy/test", proxyTest);
         mServer.get("/remote/clients", getRemoteClients);
         mServer.post("/remote/client", updateRemoteClient);
         mServer.get(".*", getStatic);
@@ -637,12 +652,20 @@ public class HttpServer implements AudioPlayer.OnChangedListener {
             response.end();
             return;
         }
-        try {
-            HttpProxy.handle(url, (source, result) -> responseProxyData(response, source, result));
-        }catch (Exception e){
-            Log.e(TAG, "send proxy get error", e);
-            response.end();
+        ProxyRequestData proxyRequestData = new ProxyRequestData();
+        proxyRequestData.setUrl(url);
+        proxyRequestData.setMethod("GET");
+
+        String httpProxy = mPreferences != null ? mPreferences.getString("musiche-http-proxy", "") : "";
+        httpProxy = httpProxy.trim();
+        if (httpProxy.startsWith("\"") && httpProxy.endsWith("\"")) {
+            httpProxy = httpProxy.substring(1, httpProxy.length() - 1);
         }
+        proxyRequestData.setHttpProxy(httpProxy.trim());
+
+        new Thread(() -> {
+            executeProxy(response, proxyRequestData);
+        }).start();
     };
 
     private final HttpServerRequestCallback proxyPost = (request, response) -> {
@@ -653,12 +676,307 @@ public class HttpServer implements AudioPlayer.OnChangedListener {
             response.send("");
             return;
         }
+
+        if (proxyRequestData.getHttpProxy() == null || proxyRequestData.getHttpProxy().isEmpty()) {
+            String httpProxy = mPreferences != null ? mPreferences.getString("musiche-http-proxy", "") : "";
+            httpProxy = httpProxy.trim();
+            if (httpProxy.startsWith("\"") && httpProxy.endsWith("\"")) {
+                httpProxy = httpProxy.substring(1, httpProxy.length() - 1);
+            }
+            proxyRequestData.setHttpProxy(httpProxy.trim());
+        }
+
+        new Thread(() -> {
+            executeProxy(response, proxyRequestData);
+        }).start();
+    };
+
+    private void executeProxy(AsyncHttpServerResponse response, ProxyRequestData proxyRequestData) {
+        HttpURLConnection conn = null;
+        InputStream is = null;
         try {
-            HttpProxy.handle(proxyRequestData, (source, result) -> responseProxyData(response, source, result));
-        }catch (Exception e){
-            Log.e(TAG, "http proxy post error", e);
+            String urlStr = proxyRequestData.getUrl();
+            URL url = new URL(urlStr);
+            
+            String httpProxy = proxyRequestData.getHttpProxy();
+            if (httpProxy != null && !httpProxy.isEmpty()) {
+                String proxyHost = "";
+                int proxyPort = 80;
+                String temp = httpProxy;
+                if (temp.startsWith("http://")) {
+                    temp = temp.substring(7);
+                } else if (temp.startsWith("https://")) {
+                    temp = temp.substring(8);
+                }
+                String[] parts = temp.split(":");
+                proxyHost = parts[0];
+                if (parts.length > 1) {
+                    proxyPort = Integer.parseInt(parts[1]);
+                }
+                Proxy javaProxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress(proxyHost, proxyPort));
+                conn = (HttpURLConnection) url.openConnection(javaProxy);
+            } else {
+                conn = (HttpURLConnection) url.openConnection();
+            }
+
+            conn.setRequestMethod(proxyRequestData.getMethod());
+            conn.setConnectTimeout(10000);
+            conn.setReadTimeout(15000);
+            conn.setInstanceFollowRedirects(proxyRequestData.isAllowAutoRedirect());
+
+            if (conn instanceof HttpsURLConnection) {
+                TrustManager[] trustAllCerts = new TrustManager[]{
+                    new X509TrustManager() {
+                        public X509Certificate[] getAcceptedIssuers() { return null; }
+                        public void checkClientTrusted(X509Certificate[] certs, String authType) {}
+                        public void checkServerTrusted(X509Certificate[] certs, String authType) {}
+                    }
+                };
+                SSLContext sc = SSLContext.getInstance("TLS");
+                sc.init(null, trustAllCerts, new java.security.SecureRandom());
+                ((HttpsURLConnection) conn).setSSLSocketFactory(sc.getSocketFactory());
+                ((HttpsURLConnection) conn).setHostnameVerifier((hostname, session) -> true);
+            }
+
+            boolean userAgentSet = false;
+            if (proxyRequestData.getHeaders() != null) {
+                for (Map.Entry<String, String> entry : proxyRequestData.getHeaders().entrySet()) {
+                    String key = entry.getKey();
+                    String val = entry.getValue();
+                    if (key.equalsIgnoreCase("user-agent")) userAgentSet = true;
+                    conn.setRequestProperty(key, val);
+                }
+            }
+            if (!userAgentSet) {
+                conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36");
+            }
+
+            if (proxyRequestData.hasBody()) {
+                conn.setDoOutput(true);
+                byte[] postData = proxyRequestData.getData().getBytes("UTF-8");
+                OutputStream os = conn.getOutputStream();
+                os.write(postData);
+                os.flush();
+                os.close();
+            }
+
+            int code = conn.getResponseCode();
+
+            if (!proxyRequestData.isAllowAutoRedirect() && code > 300 && code < 310) {
+                response.code(200);
+                response.setContentType("application/json");
+                JSONObject headerJson = new JSONObject();
+                Map<String, List<String>> resHeaders = conn.getHeaderFields();
+                for (Map.Entry<String, List<String>> entry : resHeaders.entrySet()) {
+                    if (entry.getKey() != null) {
+                        headerJson.put(entry.getKey(), String.join(",", entry.getValue()));
+                        if (entry.getKey().equalsIgnoreCase("set-cookie")) {
+                            headerJson.put("Set-Cookie-Renamed", String.join(",", entry.getValue()));
+                        }
+                    }
+                }
+                response.send(headerJson);
+                conn.disconnect();
+                return;
+            }
+
+            response.code(code);
+
+            Map<String, List<String>> resHeaders = conn.getHeaderFields();
+            for (Map.Entry<String, List<String>> entry : resHeaders.entrySet()) {
+                String key = entry.getKey();
+                if (key != null) {
+                    String lowerKey = key.toLowerCase().replaceAll("-", "");
+                    switch (lowerKey) {
+                        case "cookies":
+                        case "connection":
+                        case "contentlength":
+                        case "contentencoding":
+                        case "transferencoding":
+                        case "accesscontrolalloworigin":
+                        case "accesscontrolallowheaders":
+                        case "accesscontrolallowmethods":
+                        case "accesscontrolexposeheaders":
+                        case "accesscontrolallowcredentials":
+                            break;
+                        default:
+                            response.getHeaders().set(key, String.join(",", entry.getValue()));
+                            break;
+                    }
+                    if (key.equalsIgnoreCase("set-cookie")) {
+                        response.getHeaders().set("Set-Cookie-Renamed", String.join(",", entry.getValue()));
+                    }
+                }
+            }
+
+            if (code >= 400) {
+                is = conn.getErrorStream();
+            } else {
+                is = conn.getInputStream();
+            }
+
+            if (is != null) {
+                final InputStream finalIs = is;
+                final HttpURLConnection finalConn = conn;
+                com.koushikdutta.async.Util.pump(is, response, new com.koushikdutta.async.callback.CompletedCallback() {
+                    @Override
+                    public void onCompleted(Exception ex) {
+                        try {
+                            finalIs.close();
+                            finalConn.disconnect();
+                        } catch (Exception ignored) {}
+                        response.end();
+                    }
+                });
+            } else {
+                conn.disconnect();
+                response.end();
+            }
+
+        } catch (Exception e) {
+            Log.e(TAG, "Execute proxy request error", e);
+            try {
+                if (is != null) is.close();
+                if (conn != null) conn.disconnect();
+            } catch (Exception ignored) {}
             response.end();
         }
+    }
+
+    private final HttpServerRequestCallback proxyTest = (request, response) -> {
+        new Thread(() -> {
+            try {
+                String httpProxy = mPreferences != null ? mPreferences.getString("musiche-http-proxy", "") : "";
+                httpProxy = httpProxy.trim();
+                if (httpProxy.startsWith("\"") && httpProxy.endsWith("\"")) {
+                    httpProxy = httpProxy.substring(1, httpProxy.length() - 1);
+                }
+                httpProxy = httpProxy.trim();
+
+                if (httpProxy.isEmpty()) {
+                    JSONObject result = new JSONObject();
+                    result.put("success", false);
+                    result.put("message", "未在手机存储中检测到代理配置，请先保存代理设置");
+                    result.put("proxy", "");
+                    response.send(result);
+                    return;
+                }
+
+                String proxyHost = "";
+                int proxyPort = 80;
+                String temp = httpProxy;
+                if (temp.startsWith("http://")) {
+                    temp = temp.substring(7);
+                } else if (temp.startsWith("https://")) {
+                    temp = temp.substring(8);
+                }
+                String[] parts = temp.split(":");
+                proxyHost = parts[0];
+                if (parts.length > 1) {
+                    proxyPort = Integer.parseInt(parts[1]);
+                }
+
+                Proxy javaProxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress(proxyHost, proxyPort));
+
+                final boolean[] isUnblockNetease = {false};
+                TrustManager[] trustAllCerts = new TrustManager[]{
+                    new X509TrustManager() {
+                        public X509Certificate[] getAcceptedIssuers() { return null; }
+                        public void checkClientTrusted(X509Certificate[] certs, String authType) {}
+                        public void checkServerTrusted(X509Certificate[] certs, String authType) {
+                            if (certs != null && certs.length > 0) {
+                                for (X509Certificate cert : certs) {
+                                    String issuer = cert.getIssuerDN().getName().toLowerCase();
+                                    String subject = cert.getSubjectDN().getName().toLowerCase();
+                                    if (issuer.contains("unblock") || subject.contains("unblock")) {
+                                        isUnblockNetease[0] = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                };
+
+                SSLContext sc = SSLContext.getInstance("TLS");
+                sc.init(null, trustAllCerts, new java.security.SecureRandom());
+
+                boolean test1Success = false;
+                String test1Msg = "";
+                try {
+                    URL url = new URL("https://music.163.com/");
+                    HttpURLConnection conn = (HttpURLConnection) url.openConnection(javaProxy);
+                    conn.setConnectTimeout(5000);
+                    conn.setReadTimeout(5000);
+                    conn.setRequestMethod("GET");
+                    if (conn instanceof HttpsURLConnection) {
+                        ((HttpsURLConnection) conn).setSSLSocketFactory(sc.getSocketFactory());
+                        ((HttpsURLConnection) conn).setHostnameVerifier((hostname, session) -> true);
+                    }
+                    int code = conn.getResponseCode();
+                    test1Success = (code == 200);
+                    test1Msg = "GET主页状态码: " + code;
+                    conn.disconnect();
+                } catch (Exception e) {
+                    test1Success = false;
+                    test1Msg = "GET主页出错: " + e.getMessage();
+                }
+
+                boolean test2Success = false;
+                String test2Msg = "";
+                try {
+                    URL url = new URL("https://music.163.com/weapi/song/enhance/player/url");
+                    HttpURLConnection conn = (HttpURLConnection) url.openConnection(javaProxy);
+                    conn.setConnectTimeout(5000);
+                    conn.setReadTimeout(5000);
+                    conn.setRequestMethod("POST");
+                    conn.setDoOutput(true);
+                    conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+                    conn.setRequestProperty("Referer", "https://music.163.com");
+                    if (conn instanceof HttpsURLConnection) {
+                        ((HttpsURLConnection) conn).setSSLSocketFactory(sc.getSocketFactory());
+                        ((HttpsURLConnection) conn).setHostnameVerifier((hostname, session) -> true);
+                    }
+
+                    byte[] postData = "params=test&encSecKey=test".getBytes("UTF-8");
+                    OutputStream os = conn.getOutputStream();
+                    os.write(postData);
+                    os.flush();
+                    os.close();
+
+                    int code = conn.getResponseCode();
+                    test2Success = (code == 200);
+                    test2Msg = "POST接口状态码: " + code;
+                    conn.disconnect();
+                } catch (Exception e) {
+                    test2Success = false;
+                    test2Msg = "POST接口出错: " + e.getMessage();
+                }
+
+                boolean success = test1Success && test2Success;
+                String summary = "";
+                if (success) {
+                    summary = isUnblockNetease[0]
+                        ? "测试成功！已成功通过 UnblockNeteaseMusic 代理 [" + httpProxy + "] 连通网易云并完成 API 解析测试。"
+                        : "测试成功！已成功通过代理 [" + httpProxy + "] 连通网易云并完成 API 解析测试。";
+                } else {
+                    summary = "自检异常！\n1. " + test1Msg + "\n2. " + test2Msg + "\n请确认解锁代理配置。";
+                }
+
+                JSONObject result = new JSONObject();
+                result.put("success", success);
+                result.put("message", summary);
+                result.put("proxy", httpProxy);
+                response.send(result);
+
+            } catch (Exception e) {
+                try {
+                    JSONObject errResult = new JSONObject();
+                    errResult.put("success", false);
+                    errResult.put("message", "测试执行发生内部异常: " + e.getMessage());
+                    response.send(errResult);
+                } catch (Exception ignored) {}
+            }
+        }).start();
     };
 
     private void responseProxyData(AsyncHttpServerResponse response, AsyncHttpResponse responseProxy, ByteBufferList buffer){
