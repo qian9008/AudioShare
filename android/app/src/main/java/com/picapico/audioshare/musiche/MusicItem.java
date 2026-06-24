@@ -15,6 +15,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.UnsupportedEncodingException;
+import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
@@ -229,6 +230,10 @@ public class MusicItem {
             }
             callback.onUrlLoaded(url);
         });
+    }
+
+    private static int now(){
+        return (int) (System.currentTimeMillis()/1000);
     }
 
     private void getQQMusicUrl(Context context, Quality ignore, onUrlLoadedCallback callback, boolean audition){
