@@ -43,25 +43,17 @@ public class HttpProxy {
         if(requestData.hasBody()){
             request.setBody(new StringBody(requestData.getData()));
         }
-        String rawProxy = requestData.getHttpProxy();
-        if (rawProxy != null && !rawProxy.isEmpty()) {
+        if (requestData.getHttpProxy() != null && !requestData.getHttpProxy().isEmpty()) {
             try {
-                String parsedProxy = rawProxy.trim();
-                if (!parsedProxy.startsWith("http://") && !parsedProxy.startsWith("https://")) {
-                    parsedProxy = "http://" + parsedProxy;
-                }
-                Uri proxyUri = Uri.parse(parsedProxy);
+                Uri proxyUri = Uri.parse(requestData.getHttpProxy());
                 String host = proxyUri.getHost();
                 int port = proxyUri.getPort();
                 if (port == -1) port = "https".equalsIgnoreCase(proxyUri.getScheme()) ? 443 : 80;
                 if (host != null) {
-                    Log.i(TAG, "Enabling HTTP proxy: " + host + ":" + port);
                     request.enableProxy(host, port);
-                } else {
-                    Log.w(TAG, "Parsed proxy host is null for address: " + rawProxy);
                 }
             } catch (Exception e) {
-                Log.e(TAG, "Failed to parse proxy address: " + rawProxy, e);
+                Log.e(TAG, "Failed to parse proxy address", e);
             }
         }
         return request;
