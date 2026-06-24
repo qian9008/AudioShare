@@ -29,6 +29,6 @@
 * **通用工具函数与行为特征**：
   * **代理连接转发**：为了避免第三方网络库 HTTPS 隧道解密失败导致网络阻塞，安卓端原有的 `/proxy` 接口与各大音乐音源抓取模块均重构为基于原生 `HttpURLConnection` 进行手动代理转发。
   * **连接测试与证书校验**：新增了 `/proxy/test` 端点，不仅测试连通性，还依据特定证书响应特征判断解密代理服务（如 `UnblockNeteaseMusic`）是否工作正常。
-  * **音源拉取工具 `executeRequest`**：在 [MusicItem.java](file:///d:/Users/Documents/1/airplay/audioshare/android/app/src/main/java/com/picapico/audioshare/musiche/MusicItem.java) 中新增了 `executeRequest` 静态辅助方法。该方法具备代理感知能力，同时支持忽略不安全 SSL 证书校验、GZIP 解压缩和连接超时控制。
+  * **音源拉取工具 `executeRequest` 与协议保留**：在 [MusicItem.java](file:///d:/Users/Documents/1/airplay/audioshare/android/app/src/main/java/com/picapico/audioshare/musiche/MusicItem.java) 中新增了 `executeRequest` 静态辅助方法（支持忽略 SSL 校验、GZIP 解压与超时处理）。同时移除了原先将 `http://` 强制替换为 `https://` 的重写逻辑，以避免因第三方解密 CDN 节点（如波点、咪咕等）不支持 HTTPS 导致 SSL 证书握手失败而播放卡死。
   * **健壮的端口解析**：在解析代理 Host 与 Port 时，增加了 `replaceAll("[^\\d]", "")` 过滤，避免因代理字符串末尾包含斜杠或路径导致 `NumberFormatException` 崩溃。
   * **音频流的本地中转代理**：在 [AudioPlayer.java](file:///d:/Users/Documents/1/airplay/audioshare/android/app/src/main/java/com/picapico/audioshare/musiche/player/AudioPlayer.java) 中，如果配置了 HTTP 代理且播放的不是 localhost，会自动把音频播放的 URL 包装为本地 HttpServer 中转地址（`http://127.0.0.1:端口/proxy?url=...`），确保 ExoPlayer 发起的音频流下载请求同样经过我们配置的 HTTP 代理进行中转。

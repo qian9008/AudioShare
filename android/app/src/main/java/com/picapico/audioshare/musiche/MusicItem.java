@@ -225,7 +225,7 @@ public class MusicItem {
                     if (result.has("data")) {
                         JSONObject obj = result.getJSONArray("data").getJSONObject(0);
                         if (obj.has("url")) {
-                            url = obj.getString("url").replace("http://", "https://");
+                            url = obj.getString("url");
                         }
                     }
                 } catch (JSONException ex) {
@@ -323,7 +323,7 @@ public class MusicItem {
                     if (result.has("data")) {
                         JSONObject obj = result.getJSONObject("data");
                         if (obj.has("url")) {
-                            url = obj.getString("url").replace("http://", "https://");
+                            url = obj.getString("url");
                         }
                     }
                 } catch (JSONException ex) {
