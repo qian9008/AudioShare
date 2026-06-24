@@ -109,4 +109,12 @@ public class RemoteClient {
         if(channel >= 0) data.put("channel", channel);
         return data;
     }
+    public void disconnect(){
+        if(webSocket != null) {
+            try {
+                webSocket.close();
+            } catch (Exception ignore) {}
+            webSocket = null;
+        }
+    }
 }

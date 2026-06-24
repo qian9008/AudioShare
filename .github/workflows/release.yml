@@ -38,7 +38,7 @@ jobs:
         with:
           node-version: 22
           cache: 'pnpm'
-          cache-dependency-path: 'musiche/web/pnpm-lock.yaml'
+          cache-dependency-path: 'musiche/web/package.json'
 
       - name: Setup JDK 17
         uses: actions/setup-java@v3
@@ -78,6 +78,18 @@ jobs:
           copy .\platform-tools\AdbWinApi.dll AdbWinApi.dll
           copy .\platform-tools\AdbWinUsbApi.dll AdbWinUsbApi.dll
           $ErrorActionPreference = $prevErrorActionPreference
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: AudioShare-Builds
+          path: |
+            AudioShare.apk
+            AudioShare.exe
+            AudioShare.net6.exe
+            adb.exe
+            AdbWinApi.dll
+            AdbWinUsbApi.dll
 
       - name: Release
         uses: softprops/action-gh-release@v1

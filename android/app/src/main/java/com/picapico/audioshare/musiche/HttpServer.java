@@ -82,10 +82,43 @@ public class HttpServer implements AudioPlayer.OnChangedListener {
         mPreferences.edit().putInt("channel", channel).apply();
     }
 
+    private boolean isMultiDeviceSyncEnabled() {
+        if (mPreferences == null) return false;
+        String settingStr = mPreferences.getString("musiche-setting", "");
+        if (settingStr.isEmpty()) return false;
+        try {
+            JSONObject obj = new JSONObject(settingStr);
+            if (obj.has("multiDeviceSync")) {
+                return obj.getBoolean("multiDeviceSync");
+            }
+        } catch (Exception ignore) {}
+        return false;
+    }
+
+    private void disconnectAllRemoteClients() {
+        for (String key : mRemoteClients.keySet()) {
+            RemoteClient client = mRemoteClients.get(key);
+            if (client != null) {
+                client.disconnect();
+            }
+        }
+        mRemoteClients.clear();
+    }
+
     private void initBroadcastReceiver(){
-        mBroadcastReceiver = new BroadcastReceiver();
-        mBroadcastReceiver.setRemoteServerReceivedListener(this::onRemoteServerReceived);
-        mBroadcastReceiver.start();
+        if (isMultiDeviceSyncEnabled()) {
+            if (mBroadcastReceiver == null) {
+                mBroadcastReceiver = new BroadcastReceiver();
+                mBroadcastReceiver.setRemoteServerReceivedListener(this::onRemoteServerReceived);
+                mBroadcastReceiver.start();
+            }
+        } else {
+            if (mBroadcastReceiver != null) {
+                mBroadcastReceiver.stop();
+                mBroadcastReceiver = null;
+            }
+            disconnectAllRemoteClients();
+        }
     }
 
     private void initDeviceName(){
@@ -120,7 +153,6 @@ public class HttpServer implements AudioPlayer.OnChangedListener {
         }catch (Exception e){
             Log.e(TAG, "start http server error: ", e);
         }
-        initBroadcastReceiver();
         return this;
     }
     public void stop(){
@@ -153,6 +185,7 @@ public class HttpServer implements AudioPlayer.OnChangedListener {
     public void setSharedPreferences(SharedPreferences preferences){
         this.mPreferences = preferences;
         mAudioPlayer.setChannel(mPreferences.getInt("channel", AudioPlayer.ChannelTypeStereo));
+        initBroadcastReceiver();
     }
 
     public void setAssetManager(AssetManager assetManager){
@@ -470,6 +503,9 @@ public class HttpServer implements AudioPlayer.OnChangedListener {
         String value = request.getBody().get().toString();
         if(mPreferences != null && key != null && !key.isEmpty()){
             mPreferences.edit().putString(key, value).apply();
+            if ("musiche-setting".equals(key)) {
+                initBroadcastReceiver();
+            }
         }
         response.end();
     };
