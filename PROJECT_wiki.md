@@ -22,3 +22,12 @@
   * 将 Web 端前端缓存的依赖路径由 `musiche/web/package.json` 替换为 `musiche/web/pnpm-lock.yaml`。由于 package.json 内版本有模糊匹配前缀，用锁定绝对版本的 pnpm-lock.yaml 能根治前端依赖由于版本微小变化频繁 Cache Miss 进而每次都保存新依赖包的问题。
   * 使用专用的官方 `gradle/actions/setup-gradle@v4` 取代了 `setup-java` 内置的简易缓存，为 Windows 平台下的 Gradle 依赖与构建提供更专业、可靠的缓存机制。
   * 将 Gradle 编译命令调整为 `.\gradlew.bat assembleRelease --no-daemon`，强制在编译完成后销毁 Gradle 进程。这彻底解决了由于 Windows 文件系统上常驻守护进程（Daemon）锁死缓存目录引发的权限占用（Permission Denied），确保缓存能每次都在构建结束时成功保存。
+
+### 4. HTTP 解密代理服务与网络请求重构
+* **配置键**：`musiche-http-proxy`
+* **存储结构**：持久化在 Android `SharedPreferences` 的 `"config"` 配置文件中。
+* **通用工具函数与行为特征**：
+  * **代理连接转发**：为了避免第三方网络库 HTTPS 隧道解密失败导致网络阻塞，安卓端原有的 `/proxy` 接口与各大音乐音源抓取模块均重构为基于原生 `HttpURLConnection` 进行手动代理转发。
+  * **连接测试与证书校验**：新增了 `/proxy/test` 端点，不仅测试连通性，还依据特定证书响应特征判断解密代理服务（如 `UnblockNeteaseMusic`）是否工作正常。
+  * **音源拉取工具 `executeRequest`**：在 [MusicItem.java](file:///d:/Users/Documents/1/airplay/audioshare/android/app/src/main/java/com/picapico/audioshare/musiche/MusicItem.java) 中新增了 `executeRequest` 静态辅助方法。该方法具备代理感知能力，同时支持忽略不安全 SSL 证书校验、GZIP 解压缩和连接超时控制。
+  * **健壮的端口解析**：在解析代理 Host 与 Port 时，增加了 `replaceAll("[^\\d]", "")` 过滤，避免因代理字符串末尾包含斜杠或路径导致 `NumberFormatException` 崩溃。
