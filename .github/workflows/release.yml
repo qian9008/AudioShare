@@ -38,7 +38,7 @@ jobs:
         with:
           node-version: 22
           cache: 'pnpm'
-          cache-dependency-path: 'musiche/web/package.json'
+          cache-dependency-path: 'musiche/web/pnpm-lock.yaml'
 
       - name: Setup JDK 17
         uses: actions/setup-java@v5

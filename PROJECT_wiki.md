@@ -19,5 +19,6 @@
 * **构建产物分发 (避免打包 zip)**：移除了 `actions/upload-artifact` 步骤，改为在普通 `push` 提交时自动创建或覆盖更新名为 `dev-build` 的 **Prerelease (开发预发布)**。这可以直接在 Releases 页面以原始单文件形式分发 `AudioShare.apk`、`AudioShare.exe` 等产物，彻底避免了 GitHub Actions 本身将产物打包成 `.zip` 压缩包所带来的解压不便。
 * **构建缓存与依赖对齐**：
   * 将 `release.yml` 的通用 Actions 库版本（如 `checkout@v6`、`setup-node@v6`、`setup-java@v5`、`action-gh-release@v3`）全面与项目自带的 [web.yml](file:///d:/Users/Documents/1/airplay/audioshare/musiche/.github/workflows/web.yml) 对齐。
+  * 将 Web 端前端缓存的依赖路径由 `musiche/web/package.json` 替换为 `musiche/web/pnpm-lock.yaml`。由于 package.json 内版本有模糊匹配前缀，用锁定绝对版本的 pnpm-lock.yaml 能根治前端依赖由于版本微小变化频繁 Cache Miss 进而每次都保存新依赖包的问题。
   * 使用专用的官方 `gradle/actions/setup-gradle@v4` 取代了 `setup-java` 内置的简易缓存，为 Windows 平台下的 Gradle 依赖与构建提供更专业、可靠的缓存机制。
   * 将 Gradle 编译命令调整为 `.\gradlew.bat assembleRelease --no-daemon`，强制在编译完成后销毁 Gradle 进程。这彻底解决了由于 Windows 文件系统上常驻守护进程（Daemon）锁死缓存目录引发的权限占用（Permission Denied），确保缓存能每次都在构建结束时成功保存。
