@@ -735,6 +735,7 @@ public class HttpServer implements AudioPlayer.OnChangedListener {
             URL url = new URL(urlStr);
             
             String httpProxy = proxyRequestData.getHttpProxy();
+            Log.i(TAG, "executeProxy URL: " + urlStr + ", Proxy: [" + httpProxy + "]");
             if (httpProxy != null && !httpProxy.isEmpty()) {
                 String proxyHost = "";
                 int proxyPort = 80;
@@ -744,14 +745,21 @@ public class HttpServer implements AudioPlayer.OnChangedListener {
                 } else if (temp.startsWith("https://")) {
                     temp = temp.substring(8);
                 }
+                
+                // 去除可能包含的末尾斜杠及路径
+                temp = temp.split("/")[0].trim();
+                
                 String[] parts = temp.split(":");
                 proxyHost = parts[0];
                 if (parts.length > 1) {
-                    proxyPort = Integer.parseInt(parts[1]);
+                    proxyPort = Integer.parseInt(parts[1].replaceAll("[^\\d]", ""));
                 }
+                
+                Log.i(TAG, "Connecting via proxy -> Host: " + proxyHost + ", Port: " + proxyPort);
                 Proxy javaProxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress(proxyHost, proxyPort));
                 conn = (HttpURLConnection) url.openConnection(javaProxy);
             } else {
+                Log.i(TAG, "Connecting directly without proxy");
                 conn = (HttpURLConnection) url.openConnection();
             }
 
@@ -826,7 +834,6 @@ public class HttpServer implements AudioPlayer.OnChangedListener {
                     switch (lowerKey) {
                         case "cookies":
                         case "connection":
-                        case "contentlength":
                         case "contentencoding":
                         case "transferencoding":
                         case "accesscontrolalloworigin":
@@ -888,6 +895,8 @@ public class HttpServer implements AudioPlayer.OnChangedListener {
                     httpProxy = httpProxy.substring(1, httpProxy.length() - 1);
                 }
                 httpProxy = httpProxy.trim();
+                
+                Log.i(TAG, "proxyTest requested. Current storage proxy: [" + httpProxy + "]");
 
                 if (httpProxy.isEmpty()) {
                     JSONObject result = new JSONObject();
@@ -906,12 +915,17 @@ public class HttpServer implements AudioPlayer.OnChangedListener {
                 } else if (temp.startsWith("https://")) {
                     temp = temp.substring(8);
                 }
+                
+                // 去除可能包含的末尾斜杠及路径
+                temp = temp.split("/")[0].trim();
+                
                 String[] parts = temp.split(":");
                 proxyHost = parts[0];
                 if (parts.length > 1) {
-                    proxyPort = Integer.parseInt(parts[1]);
+                    proxyPort = Integer.parseInt(parts[1].replaceAll("[^\\d]", ""));
                 }
 
+                Log.i(TAG, "proxyTest executing via proxy -> Host: " + proxyHost + ", Port: " + proxyPort);
                 Proxy javaProxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress(proxyHost, proxyPort));
 
                 final boolean[] isUnblockNetease = {false};
