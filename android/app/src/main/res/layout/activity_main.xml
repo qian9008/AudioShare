@@ -51,28 +51,7 @@
         android:gravity="center"
         android:id="@+id/ipAddress"/>
     <LinearLayout
-        android:layout_width="wrap_content"
-        android:layout_height="25dp"
-        android:orientation="horizontal"
-        android:layout_marginTop="35dp"
-        android:layout_marginEnd="20dp"
-        android:gravity="end"
-        android:id="@+id/connection"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
-        <TextView
-            android:id="@+id/connectionText"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:gravity="center" />
-        <androidx.appcompat.widget.SwitchCompat
-            android:layout_width="wrap_content"
-            android:layout_height="match_parent"
-            android:id="@+id/connectionSwitch"
-            android:clickable="false"
-            android:gravity="center"/>
-    </LinearLayout>
-    <LinearLayout
+        android:id="@+id/managerLayout"
         android:layout_width="0dp"
         android:layout_height="25dp"
         android:layout_marginStart="20dp"
@@ -82,7 +61,7 @@
         android:gravity="start"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toStartOf="@id/connection">
+        app:layout_constraintEnd_toEndOf="parent">
         <androidx.appcompat.widget.SwitchCompat
             android:layout_width="wrap_content"
             android:layout_height="match_parent"
@@ -90,6 +69,29 @@
             android:gravity="center"/>
         <TextView
             android:id="@+id/managerText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:gravity="center" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="25dp"
+        android:orientation="horizontal"
+        android:layout_marginStart="20dp"
+        android:layout_marginTop="10dp"
+        android:gravity="start"
+        android:id="@+id/connection"
+        app:layout_constraintTop_toBottomOf="@id/managerLayout"
+        app:layout_constraintStart_toStartOf="parent">
+        <androidx.appcompat.widget.SwitchCompat
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:id="@+id/connectionSwitch"
+            android:clickable="false"
+            android:gravity="center"/>
+        <TextView
+            android:id="@+id/connectionText"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:gravity="center" />

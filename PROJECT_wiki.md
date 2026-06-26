@@ -20,7 +20,8 @@
 * **构建缓存与依赖对齐**：
   * 将 `release.yml` 的通用 Actions 库版本（如 `checkout@v6`、`setup-node@v6`、`setup-java@v5`、`action-gh-release@v3`）全面与项目自带的 [web.yml](file:///d:/Users/Documents/1/airplay/audioshare/musiche/.github/workflows/web.yml) 对齐。
   * 将 Web 端前端缓存的依赖路径由 `musiche/web/package.json` 替换为 `musiche/web/pnpm-lock.yaml`。由于 package.json 内版本有模糊匹配前缀，用锁定绝对版本的 pnpm-lock.yaml 能根治前端依赖由于版本微小变化频繁 Cache Miss 进而每次都保存新依赖包的问题。
-  * 使用专用的官方 `gradle/actions/setup-gradle@v4` 取代了 `setup-java` 内置的简易缓存，为 Windows 平台下的 Gradle 依赖与构建提供更专业、可靠的缓存机制。
+  * 使用专用的官方 `gradle/actions/setup-gradle@v4` 取代了 `setup-java` 内置的简易缓存，为 Android 编译流程下的 Gradle 依赖与构建提供更专业、可靠的缓存机制。
+  * 针对 GitHub 缓存只读不可变导致的缓存碎片与 Tag 构建缓存浪费问题，通过配置 `cache-read-only: ${{ github.ref != 'refs/heads/master' }}`，将缓存更新权收归 `master` 分支。在非 `master` 分支（如 release tag 触发的构建）中只读复用现有缓存，不再回写，从根本上防止生成大量废弃的缓存，并保障构建性能。
   * 将 Gradle 编译命令调整为 `.\gradlew.bat assembleRelease --no-daemon`，强制在编译完成后销毁 Gradle 进程。这彻底解决了由于 Windows 文件系统上常驻守护进程（Daemon）锁死缓存目录引发的权限占用（Permission Denied），确保缓存能每次都在构建结束时成功保存。
 
 ### 4. HTTP 解密代理服务与网络请求重构
