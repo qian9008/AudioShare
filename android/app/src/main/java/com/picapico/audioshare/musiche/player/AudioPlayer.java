@@ -4,6 +4,8 @@ import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.media.AudioManager;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 
 import androidx.annotation.IntDef;
@@ -17,6 +19,7 @@ import com.picapico.audioshare.musiche.notification.OnActionReceiveListener;
 
 import org.json.JSONObject;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -87,6 +90,50 @@ public class AudioPlayer implements OnActionReceiveListener, IMediaPlayer.Listen
     public void setServerPort(int port) {
         this.mServerPort = port;
     }
+
+    //region 状态落地回调 (Settled Callback)
+    // 背景：ExoPlayer 的 play/pause/seek 全部是 post 到主线程异步执行的，HTTP 层如果动作一发出就取状态，
+    // 拿到的是“操作之前的旧快照”（playing=false、进度还是上一首），网页端会显示成没播/进度错乱。
+    // 这里提供一个一次性回调队列：等播放器真正发生状态变化（时长就绪/播放状态变化/进度刷新）后，
+    // 在主线程统一执行，让上层可以“动作生效后再回包”。
+    private static final long SETTLE_TIMEOUT_MS = 900;
+    private final Handler mMainHandler = new Handler(Looper.getMainLooper());
+    private final List<Runnable> mSettledTasks = new ArrayList<>();
+    private final Runnable mSettleTimeoutTask = this::flushSettledTasks;
+
+    /** 注册一个“状态已落地”回调，触发一次后自动移除；超时也会兜底执行，避免请求悬挂。 */
+    public void postWhenSettled(Runnable task) {
+        if (task == null) return;
+        synchronized (mSettledTasks) {
+            mSettledTasks.add(task);
+        }
+        mMainHandler.removeCallbacks(mSettleTimeoutTask);
+        mMainHandler.postDelayed(mSettleTimeoutTask, SETTLE_TIMEOUT_MS);
+    }
+
+    /** 投递到主线程执行（用于 seek 这类不产生播放状态变化、但需要拿实时位置的操作）。 */
+    public void postOnMain(Runnable task) {
+        if (task != null) mMainHandler.post(task);
+    }
+
+    /** 立即执行所有待回包任务（主线程）。 */
+    private void flushSettledTasks() {
+        List<Runnable> tasks;
+        synchronized (mSettledTasks) {
+            if (mSettledTasks.isEmpty()) return;
+            tasks = new ArrayList<>(mSettledTasks);
+            mSettledTasks.clear();
+        }
+        mMainHandler.removeCallbacks(mSettleTimeoutTask);
+        for (Runnable task : tasks) {
+            try {
+                task.run();
+            } catch (Exception e) {
+                Log.e(TAG, "settled task error", e);
+            }
+        }
+    }
+    //endregion
     //region Public method
     public void setChannel(@ChannelType int channel) {
         if(this.mChannel == channel) return;
@@ -175,6 +222,7 @@ public class AudioPlayer implements OnActionReceiveListener, IMediaPlayer.Listen
         if(changedListener != null){
             changedListener.onPositionChanged();
         }
+        flushSettledTasks();
     }
 
     private long lastSendTime = 0;
@@ -183,13 +231,16 @@ public class AudioPlayer implements OnActionReceiveListener, IMediaPlayer.Listen
         updateMediaMetadataPosition();
         if(changedListener != null){
             changedListener.onPositionChanged();
-            if(!remote) return;
-            long now = System.currentTimeMillis();
-            if(now - lastSendTime > 1500) {
-                changedListener.onPlaying(true, null, null, 0);
-                lastSendTime = now;
+            if(remote) {
+                long now = System.currentTimeMillis();
+                if(now - lastSendTime > 1500) {
+                    changedListener.onPlaying(true, null, null, 0);
+                    lastSendTime = now;
+                }
             }
         }
+        // 进度刷新也算“状态已落地”，顺带把挂起的回包任务执行掉
+        flushSettledTasks();
     }
     @Override
     public void onPlaybackStateChanged(int playbackState) {
@@ -217,6 +268,8 @@ public class AudioPlayer implements OnActionReceiveListener, IMediaPlayer.Listen
         }
 
         updateMediaMetadata();
+        // 播放/暂停真正生效，执行上层挂起的回包任务
+        flushSettledTasks();
     }
     //endregion
 
@@ -368,6 +421,9 @@ public class AudioPlayer implements OnActionReceiveListener, IMediaPlayer.Listen
         if(mAudioManager != null){
             volume = mAudioManager.getStreamVolume(AudioManager.STREAM_MUSIC)*100/maxAudioVolume;
         }
+        // 音源地址可能要异步解析后才能拿到，这里再放一次落地信号：
+        // 排在 mediaPlayer.play() 的 post 之后执行，让 /play 请求尽早带着正确状态回包
+        mMainHandler.post(this::flushSettledTasks);
     }
     public void play(int index){
         remote = false;

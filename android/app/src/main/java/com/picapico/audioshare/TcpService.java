@@ -272,6 +272,9 @@ public class TcpService extends NotificationService {
         int port = NetworkUtils.getFreePort(Build.MANUFACTURER.equalsIgnoreCase("phicomm") ? 8090 : 8080);
         this.setHttpPort(port);
         httpServer = new HttpServer(getApplicationContext(), port).start();
+        // 服务可能在 Activity 未启动时就开始跑（开机自启/进程复活），这里主动注入 AudioManager，
+        // 否则网页端调音量会静默失败（AudioPlayer.setVolume 在 mAudioManager 为 null 时直接返回）
+        httpServer.setAudioManager((AudioManager) getSystemService(Context.AUDIO_SERVICE));
         httpServer.getAudioPlayer().setMediaMetaChangedListener(new AudioPlayer.OnMediaMetaChangedListener() {
             @Override
             public void onMediaMetaChanged(boolean playing, int position) {

@@ -33,3 +33,15 @@
   * **音源拉取工具 `executeRequest` 与协议保留**：在 [MusicItem.java](file:///d:/Users/Documents/1/airplay/audioshare/android/app/src/main/java/com/picapico/audioshare/musiche/MusicItem.java) 中新增了 `executeRequest` 静态辅助方法（支持忽略 SSL 校验、GZIP 解压与超时处理）。同时移除了原先将 `http://` 强制替换为 `https://` 的重写逻辑，以避免因第三方解密 CDN 节点（如波点、咪咕等）不支持 HTTPS 导致 SSL 证书握手失败而播放卡死。
   * **健壮的端口解析**：在解析代理 Host 与 Port 时，增加了 `replaceAll("[^\\d]", "")` 过滤，避免因代理字符串末尾包含斜杠或路径导致 `NumberFormatException` 崩溃。
   * **音频流的本地中转与安全策略绕过**：在 [AudioPlayer.java](file:///d:/Users/Documents/1/airplay/audioshare/android/app/src/main/java/com/picapico/audioshare/musiche/player/AudioPlayer.java) 中，如果配置了 HTTP 代理，或者播放链接是以外网明文 `http://` 开头，系统会自动将音频播放 URL 包装为本地 HttpServer 环回中转地址（`http://127.0.0.1:端口/proxy?url=...`）。这不仅能确保播放器音频下载流量全部经由代理，也能通过 localhost 转发，完美规避安卓系统在播放明文外网流媒体时的安全策略限制。
+
+### 5. 网页端状态同步机制 (Web UI State Sync)
+* **背景**：网页端（浏览器打开 `http://设备IP:端口`）是纯远程控制器。`musiche` 前端每次操作都 `checkingStatus = true` → 发 HTTP 请求 → 用**响应体**里的 `status` 覆盖本地状态（`play.ts` 的 `setStatus`），期间丢弃 WebSocket 推送。而 ExoPlayer 的 play/pause/seek 全部 `handler.post` 到主线程异步执行，导致"动作发出立刻取状态"拿到的是操作前的旧快照（`playing=false`、进度还是上一首），页面表现为点了播放没反应。
+* **状态落地回调 `postWhenSettled`**（[AudioPlayer.java](file:///d:/Users/Documents/1/airplay/audioshare/android/app/src/main/java/com/picapico/audioshare/musiche/player/AudioPlayer.java)）：
+  * `postWhenSettled(Runnable)` 把"回包任务"注册进一次性队列，等 `onDurationChanged` / `onPositionChanged` / `onPlayingChanged` 任一事件（均在主线程）触发时统一 `flushSettledTasks()` 执行；`900ms` 超时兜底，避免请求悬挂。
+  * `postOnMain(Runnable)` 用于 seek 这类不产生播放状态变化、但需要实时位置的操作（排在 `seekTo` 的 post 之后执行）。
+  * `play(String uri)` 结束时额外 `mMainHandler.post(flushSettledTasks)`：音源 URL 异步解析完成后立刻触发一次落地，让 `/play` 尽早回包。
+* **实时位置读取**：`ExoPlayer.getPosition()/getDuration()` 在主线程直接读 `mediaPlayer` 实时值，避免缓存字段（每 500ms 才刷新）导致 seek 后进度条回跳。
+* **HTTP 接口约定**：`/play`、`/pause`、`/progress` 走 `respondStatusWhenSettled()`（动作生效后再回包）；`/volume`、`/status` 走 `respondStatus()`（同步生效，无需等待）。所有回包与状态变更统一调用 `pushStatus()` 广播给全部网页 WebSocket 客户端。
+* **推送补全**：`onPlaying(remote=false)`（服务端/通知栏发起的播放）、`onPaused()`、`onVolumeChanged()` 均补推网页端，此前只推多机互联 `sws` 通道。
+* **`/ws` 字符串回调**：注册 `setStringCallback` 处理前端主动发送的 `/status`（`sendWsStatus()`），此前被静默丢弃。
+* **监听器注册时机**：`HttpServer` 构造阶段即调用 `setOnLoadSuccessListener(this)`，不再依赖 `MainActivity` 绑定；`TcpService.startHttpServer()` 主动注入 `AudioManager`，保证开机自启/进程复活后网页端音量控制可用。

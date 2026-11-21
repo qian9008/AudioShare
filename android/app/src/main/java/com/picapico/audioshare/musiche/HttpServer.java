@@ -69,6 +69,9 @@ public class HttpServer implements AudioPlayer.OnChangedListener {
         mContext = context;
         mAudioPlayer = new AudioPlayer(context);
         mAudioPlayer.setServerPort(port);
+        // 在构造阶段就挂上监听器：服务被系统拉起（开机自启/进程复活）而 Activity 未绑定时，
+        // 也要能向网页端推送状态，否则浏览器页面永远收不到任何更新
+        mAudioPlayer.setOnLoadSuccessListener(this);
         initDeviceName();
     }
 
@@ -277,7 +280,7 @@ public class HttpServer implements AudioPlayer.OnChangedListener {
     //region AudioPlayer listener
     @Override
     public void onPositionChanged() {
-        sendWSMessage(mAudioPlayer.getStatus().toString());
+        pushStatus();
     }
 
     @Override
@@ -289,12 +292,15 @@ public class HttpServer implements AudioPlayer.OnChangedListener {
     @Override
     public void onPaused() {
         sendServerWSMessage(RemoteMessage.of(RemoteMessage.MessageTypePause));
+        // 网页端也要立刻看到暂停，否则进度条会在页面上继续跑
+        pushStatus();
     }
 
     @Override
     public void onVolumeChanged(int volume) {
         sendServerWSMessage(RemoteMessage.of(RemoteMessage.MessageTypeVolume)
                 .setVolume(volume));
+        pushStatus();
     }
 
     private long getPositionTime = 0;
@@ -313,12 +319,44 @@ public class HttpServer implements AudioPlayer.OnChangedListener {
                     .setMusic(music)
                     .setVolume(volume);
             PlayerVisualizer.updateTimeMillis();
+            // 服务端发起的播放（通知栏/定时任务/切换下一首）同步到网页
+            pushStatus();
         }
         sendServerWSMessage(message);
     }
 
     public AudioPlayer getAudioPlayer() {
         return mAudioPlayer;
+    }
+
+    /** 把当前状态推给所有网页客户端 */
+    private void pushStatus() {
+        try {
+            String status = mAudioPlayer.getStatus().toString();
+            if (BuildConfig.DEBUG) Log.d(TAG, "push status: " + status);
+            sendWSMessage(status);
+        } catch (Exception e) {
+            Log.e(TAG, "push status error", e);
+        }
+    }
+
+    /** 立即用当前状态回包，并广播给其他网页 */
+    private void respondStatus(AsyncHttpServerResponse response) {
+        try {
+            response.send(mAudioPlayer.getStatus());
+        } catch (Exception e) {
+            Log.e(TAG, "respond status error", e);
+        }
+        pushStatus();
+    }
+
+    /**
+     * 等播放器状态真正生效后再回包。
+     * 直接回包只能拿到异步执行前的旧快照（ExoPlayer 的命令都是 post 到主线程的），
+     * 网页端会显示成“点了播放没反应 / 进度还是上一首”。
+     */
+    private void respondStatusWhenSettled(AsyncHttpServerResponse response) {
+        mAudioPlayer.postWhenSettled(() -> respondStatus(response));
     }
     //endregion
 
@@ -536,8 +574,13 @@ public class HttpServer implements AudioPlayer.OnChangedListener {
     private final HttpServerRequestCallback play = (request, response) -> {
         Object body = request.getBody().get();
         if(body == null){
+            if(mAudioPlayer.getCurrentMusic() == null){
+                // 没有可播放的内容，直接回当前状态，避免网页端空等
+                respondStatus(response);
+                return;
+            }
             mAudioPlayer.play();
-            response.send(mAudioPlayer.getStatus());
+            respondStatusWhenSettled(response);
             return;
         }
         if(body instanceof JSONObject){
@@ -553,7 +596,7 @@ public class HttpServer implements AudioPlayer.OnChangedListener {
                 }
             }
         }
-        response.send(mAudioPlayer.getStatus());
+        respondStatusWhenSettled(response);
     };
     private final HttpServerRequestCallback updateList = (request, response) -> {
         Object body = request.getBody().get();
@@ -563,20 +606,35 @@ public class HttpServer implements AudioPlayer.OnChangedListener {
         response.send("application/json", "{\"data\":true}");
     };
     private final HttpServerRequestCallback pause = (request, response) -> {
+        boolean alreadyPaused = !mAudioPlayer.isPlaying();
         mAudioPlayer.pause();
-        response.send(mAudioPlayer.getStatus());
+        if(alreadyPaused) respondStatus(response);
+        else respondStatusWhenSettled(response);
     };
     private final HttpServerRequestCallback progress = (request, response) -> {
-        int progress = Integer.parseInt(request.getBody().get().toString());
+        int progress;
+        try {
+            progress = Integer.parseInt(request.getBody().get().toString().trim());
+        } catch (Exception e) {
+            respondStatus(response);
+            return;
+        }
         mAudioPlayer.setProgress(progress);
-        response.send(mAudioPlayer.getStatus());
+        // seek 不会改变播放状态，等主线程里排队的 seekTo 执行完再取实时位置回包
+        mAudioPlayer.postOnMain(() -> respondStatus(response));
     };
     private final HttpServerRequestCallback volume = (request, response) -> {
-        int volume = Integer.parseInt(request.getBody().get().toString());
-        mAudioPlayer.setVolume(volume);
-        response.send(mAudioPlayer.getStatus());
+        int volume;
+        try {
+            volume = Integer.parseInt(request.getBody().get().toString().trim());
+        } catch (Exception e) {
+            respondStatus(response);
+            return;
+        }
+        mAudioPlayer.setVolume(volume);   // 音量字段同步修改，无需等待
+        respondStatus(response);
     };
-    private final HttpServerRequestCallback status = (request, response) -> response.send(mAudioPlayer.getStatus());
+    private final HttpServerRequestCallback status = (request, response) -> respondStatus(response);
     private final HttpServerRequestCallback loop = (request, response) -> {
         String loopType = request.getBody().get().toString().toLowerCase();
         switch (loopType)
@@ -1111,6 +1169,17 @@ public class HttpServer implements AudioPlayer.OnChangedListener {
             mWebClients.add(webSocket);
         }
         webSocket.send(mAudioPlayer.getStatus().toString());
+        // 前端会主动发 "/status" 拉一次状态（见 musiche 的 sendWsStatus），
+        // 之前没有注册字符串回调，这些请求被静默丢弃
+        webSocket.setStringCallback(message -> {
+            try {
+                if (message != null && message.trim().equals("/status")) {
+                    pushStatus();
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "handle web client message error", e);
+            }
+        });
         webSocket.setClosedCallback(e -> {
             try {
                 if (e != null) Log.e(TAG, "An error occurred", e);

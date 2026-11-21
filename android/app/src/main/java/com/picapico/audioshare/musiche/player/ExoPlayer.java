@@ -109,11 +109,27 @@ public class ExoPlayer implements IMediaPlayer, Player.Listener {
 
     @Override
     public int getDuration() {
+        // 主线程直接读实时值：缓存字段只在时间轴变化时刷新，拿到的是旧值
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            try {
+                long real = mediaPlayer.getDuration();
+                if (real > 0 && real != C.TIME_UNSET) {
+                    duration = (int) real;
+                    return duration;
+                }
+            } catch (Exception ignore) {}
+        }
         return duration;
     }
 
     @Override
     public int getPosition() {
+        // 主线程直接读实时值：seek 之后缓存的 position 可能还是旧位置，会导致进度条回跳
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            try {
+                position = (int) mediaPlayer.getCurrentPosition();
+            } catch (Exception ignore) {}
+        }
         return position;
     }
 
