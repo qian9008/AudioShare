@@ -69,4 +69,5 @@
   ```
   两数相等即为纯 CRLF。
 * **上游新增能力（本次引入）**：`room-server`（Go，WebSocket/WebRTC 音乐房间、端到端加密聊天、凭证刷新）、Web 端 `room*.vue` 房间大厅/播放/中继、`capabilities` 播放器能力检测（`Footer.vue` 的音量控件受 `capabilities.volume` 控制）。
+* **模板静态属性禁止出现 `://`（踩坑记录）**：`vue-tsc` 3.3.x 在生成虚拟 TS 代码时，静态 HTML 属性中的 `//`（如 `placeholder="例如: http://127.0.0.1:1080"`）会被当成行注释起始，注释掉后续生成代码，导致**整份 SFC 所有 setup 绑定**的 `.value` 推断错乱，报出几十条 `TS2551/TS2339`。写法改为 `:placeholder="'...'"` 也无效。解决：静态属性里不要写 `http://`，例如写成 `placeholder="例如 127.0.0.1:1080"`。排查此类问题时，用 `@vue/compiler-sfc` 的 `compileScript` 看 `bindings` 是否被判成 `setup-maybe-ref`，再逐块回退模板 diff 定位触发属性。
 
