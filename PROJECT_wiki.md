@@ -45,3 +45,28 @@
 * **推送补全**：`onPlaying(remote=false)`（服务端/通知栏发起的播放）、`onPaused()`、`onVolumeChanged()` 均补推网页端，此前只推多机互联 `sws` 通道。
 * **`/ws` 字符串回调**：注册 `setStringCallback` 处理前端主动发送的 `/status`（`sendWsStatus()`），此前被静默丢弃。
 * **监听器注册时机**：`HttpServer` 构造阶段即调用 `setOnLoadSuccessListener(this)`，不再依赖 `MainActivity` 绑定；`TcpService.startHttpServer()` 主动注入 `AudioManager`，保证开机自启/进程复活后网页端音量控制可用。
+
+### 6. 上游同步工作流 (Upstream Sync)
+* **仓库拓扑**：
+  * 父仓库 `AudioShare`：`origin` = `qian9008/AudioShare`（fork），`upstream` = `HeHang0/AudioShare`（上游）。
+  * 子模块 `musiche/`：`origin` = `qian9008/musiche`（fork），本地已追加 `upstream` = `HeHang0/musiche`。
+* **初始化/同步命令**：
+  ```bash
+  git submodule update --init musiche          # 子模块是空目录时先初始化
+  cd musiche
+  git remote add upstream https://github.com/HeHang0/musiche
+  git fetch upstream
+  git checkout master
+  git merge upstream/master                     # 用 merge，不要 rebase（本地 30+ 私有提交会被重写）
+  ```
+* **改动边界（2026-11 同步时确认）**：上游只动 `web/`、`room-server/`（Go 房间服务）、`.github/workflows/web.yml`；本 fork 的私有改动集中在 `mobile/lib`（安卓中转代理、状态页）、`proxy-server/`、`proxy-windows/`，上游零接触 → 该三块永不冲突。
+* **固定冲突点（上游每次都会碰）**：`web/src/utils/http.ts`、`storage.ts`、`stores/connection.ts`、`views/setting.vue`、`components/Footer.vue`、`web/package.json`、`.github/workflows/web.yml`。
+  * 代理地址：上游统一用 `'musiche-' + StorageKey.ProxyAddress` 读取并 `.replace(/"/g,'').trim()`；本地必须在同一套写法上叠加 `globalHttpProxy`（`StorageKey.HttpProxy`），不要再回到手工 `JSON.parse` 剥引号的旧写法。
+  * CI：本 fork 主动关闭 `build-on-macos` / `build-on-ios` / `build-on-windows` 三个任务（仅保留 `build-web` + `build-on-android` + `publish`），并保留 `workflow_dispatch` 与 404 页面默认代理注入；上游版本含全平台任务，恢复时参考上游文件。
+* **行尾约束（重要坑）**：`musiche/web/src` 下绝大部分文件是 **CRLF**（上游新增文件为 LF）。编辑器/工具保存时若把 CRLF 文件转成 LF，会造成「相对上游整文件差异」，下一次上游合并直接整文件冲突。改完 web 侧文件后务必检查：
+  ```bash
+  python3 -c "b=open('文件','rb').read(); print(b.count(b'\r\n'), b.count(b'\n'))"
+  ```
+  两数相等即为纯 CRLF。
+* **上游新增能力（本次引入）**：`room-server`（Go，WebSocket/WebRTC 音乐房间、端到端加密聊天、凭证刷新）、Web 端 `room*.vue` 房间大厅/播放/中继、`capabilities` 播放器能力检测（`Footer.vue` 的音量控件受 `capabilities.volume` 控制）。
+
