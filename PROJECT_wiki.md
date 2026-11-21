@@ -69,5 +69,6 @@
   ```
   两数相等即为纯 CRLF。
 * **上游新增能力（本次引入）**：`room-server`（Go，WebSocket/WebRTC 音乐房间、端到端加密聊天、凭证刷新）、Web 端 `room*.vue` 房间大厅/播放/中继、`capabilities` 播放器能力检测（`Footer.vue` 的音量控件受 `capabilities.volume` 控制）。
+* **Android APK 打包 web 资源（卡首屏 logo 踩坑）**：`musiche/mobile/assets` 在 git 中是**符号链接** `../web/dist`，本地开发时自动指向构建产物。CI `build-on-android` 的 `Prepare assets` 步骤必须先 `rm -rf mobile/assets`（删链接）再 `mkdir -p mobile/assets` 然后 `cp -r web/dist/* mobile/assets/`。若漏掉 `mkdir`，`cp` 会因目标目录不存在失败；原上游用 `cp ... || true` 吞掉错误，Flutter 打出的 APK 内**没有任何 web 文件**（`index.html` 缺失），WebView 请求 `/index.html` 时 `_handleIndex` 找不到资源 → 302 重定向死循环 → 卡在首屏。**该缺陷上游一直存在**（上游 9 月 APK 同样无 web 文件），本 fork 已修复：补 `mkdir -p` 并移除 cp 的 `|| true`（让后续失败在 CI 显式暴露）。验货方法：`unzip -l APK | grep index.html` 应有结果。注意 APK 里 WebView 访问的是 Flutter 内置 HTTP server 的 `http://127.0.0.1:<port>/index.html`，是回环地址，无法从电脑通过设备 IP 访问调试。
 * **模板静态属性禁止出现 `://`（踩坑记录）**：`vue-tsc` 3.3.x 在生成虚拟 TS 代码时，静态 HTML 属性中的 `//`（如 `placeholder="例如: http://127.0.0.1:1080"`）会被当成行注释起始，注释掉后续生成代码，导致**整份 SFC 所有 setup 绑定**的 `.value` 推断错乱，报出几十条 `TS2551/TS2339`。写法改为 `:placeholder="'...'"` 也无效。解决：静态属性里不要写 `http://`，例如写成 `placeholder="例如 127.0.0.1:1080"`。排查此类问题时，用 `@vue/compiler-sfc` 的 `compileScript` 看 `bindings` 是否被判成 `setup-maybe-ref`，再逐块回退模板 diff 定位触发属性。
 
