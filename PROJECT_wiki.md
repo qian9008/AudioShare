@@ -97,3 +97,8 @@
   * `/config` 能力位不同，直接改变可见入口：AudioShare `file=false / client=true`；Flutter 版 `file=true / client=false`。`config.file` 控制侧边栏"本地文件"入口（`SideMenu.vue`），`config.client` 控制远程客户端管理（`setting.updateRemoteClients`）。
   * `localStorage` 按 origin 隔离：AudioShare 是 `http://局域网IP:8090`，Flutter 版是 `http://127.0.0.1:<port>`。主题、布局、隐藏模块、歌单偏好等设置**互不共享**，看起来就是"两个界面"。
   * 主题自动模式依赖 `isAndroid && config.remote`（`setting.autoAppThemeChanged`），两壳的 UA 与 config 组合不同，自动深浅色结果也会不同。
+
+### 9. 手动触发构建 (Manual Build)
+* `release.yml` 增加 `workflow_dispatch`：在 GitHub Actions 页面点 "Run workflow" 即可手动编译，无需 push 提交。
+* 触发后行为与自动构建一致：跑在 `master` 上更新 `dev-build` 预发布版；只有 push `v*.*.*` tag 才出正式 Release。Release 说明里的 `head_commit` 字段已有兜底，手动触发不会报错。
+* 用途：前端子库更新后立刻重编 APK、验证 CI 配置改动，不必制造空提交。

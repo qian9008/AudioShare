@@ -6,6 +6,9 @@ on:
       - master
     tags:
       - 'v*.*.*'
+  # 手动触发：在 Actions 页面点 Run workflow，可选分支
+  # 手动跑 master 时会照常更新 dev-build；打 tag 时才出正式 Release
+  workflow_dispatch: {}
 
 jobs:
   # 任务 1：编译 Web 静态包 (Linux 环境)
