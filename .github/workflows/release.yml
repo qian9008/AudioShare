@@ -22,6 +22,8 @@ jobs:
           cd musiche
           git fetch origin master
           git checkout -f FETCH_HEAD
+          echo "musiche commit: $(git rev-parse HEAD)"
+          git log --oneline -1
           cd ..
 
       - name: Setup pnpm
@@ -38,7 +40,14 @@ jobs:
 
       - name: Build Web
         run: |
-          cd musiche/web
+          cd musiche
+          # 与上游 web.yml 保持一致：同步版本号，并把 resources 下的 logo 落成真实文件。
+          # public/logo*.png 在仓库里是 symlink，checkout 若未开启 symlink 会变成文本文件
+          node web/scripts/version.js
+          rm -f web/public/logo.png web/public/logo-circle.png || true
+          cp resources/logo.png web/public/logo.png || true
+          cp resources/logo-circle.png web/public/logo-circle.png || true
+          cd web
           pnpm install --frozen-lockfile
           pnpm run build
 
@@ -63,6 +72,8 @@ jobs:
           cd musiche
           git fetch origin master
           git checkout -f FETCH_HEAD
+          echo "musiche commit: $(git rev-parse HEAD)"
+          git log --oneline -1
           cd ..
 
       - name: Download Web Artifact
@@ -124,6 +135,8 @@ jobs:
           cd musiche
           git fetch origin master
           git checkout -f FETCH_HEAD
+          echo "musiche commit: $(git rev-parse HEAD)"
+          git log --oneline -1
           cd ..
 
       - name: Download Web Artifact

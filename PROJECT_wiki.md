@@ -86,3 +86,14 @@
 * **握手超时 8s**：`utils/http.ts` 的 `CommunicationClient` 新增可选 `close()`，超时未 open 则主动断开交给退避。设备休眠、AP 隔离时浏览器 TCP 可能长时间不报错，靠这个兜底。
 * **回到前台立即补连**：`visibilitychange` 检测到页面可见且未连接时，跳过退避等待直接重连（后台标签页定时器被浏览器节流，最长可能等 30s）。
 * **重连后对状态**：`wsOpen` 主动发送 `/status\n`，配合服务端 `setStringCallback` 补齐掉线期间错过的状态。
+
+### 8. 子库版本取用与两套 APK 的 UI 差异
+* **CI 不使用 submodule 指针**：`release.yml` 的三个 job 都执行 `git fetch origin master && git checkout -f FETCH_HEAD`，因此打进 APK 的前端**永远是 musiche 的 origin/master 最新提交**。主仓库里把 submodule 指到某个 commit 只影响本地工作区，不影响产物。
+* **可追溯性**：三个 job 在拉取后打印 `git rev-parse HEAD` 与 `git log --oneline -1`，构建日志即可确认该 APK 打包的是哪个前端版本。
+* **与上游构建对齐**：`build-web` 现在也执行 `web/scripts/version.js`（同步 `manifest.json` / `windows` / `mobile` 版本号）并重新落地 `public/logo*.png`。仓库里这两个文件是 symlink 指向 `resources/`，checkout 未开启 symlink 时会变成文本文件，导致页面图标缺失。
+* **AudioShare.apk 与 musiche 独立 APK（Flutter，`musiche/mobile`）是两套壳，不是同一个 App**：
+  * 服务端不同：AudioShare 是 Java `HttpServer` + ExoPlayer；Flutter 版是 Dart server（`mobile/lib/server`）+ Flutter 音频通道。
+  * 页面来源相同：都加载同一套 web dist（`mobile/assets` 是指向 `../web/dist` 的 symlink），但**版本不同** —— AudioShare 每次 CI 拉最新 master，Flutter APK 用构建当时本地的 dist。
+  * `/config` 能力位不同，直接改变可见入口：AudioShare `file=false / client=true`；Flutter 版 `file=true / client=false`。`config.file` 控制侧边栏"本地文件"入口（`SideMenu.vue`），`config.client` 控制远程客户端管理（`setting.updateRemoteClients`）。
+  * `localStorage` 按 origin 隔离：AudioShare 是 `http://局域网IP:8090`，Flutter 版是 `http://127.0.0.1:<port>`。主题、布局、隐藏模块、歌单偏好等设置**互不共享**，看起来就是"两个界面"。
+  * 主题自动模式依赖 `isAndroid && config.remote`（`setting.autoAppThemeChanged`），两壳的 UA 与 config 组合不同，自动深浅色结果也会不同。
