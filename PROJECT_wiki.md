@@ -77,3 +77,12 @@
 * **网页 WebSocket 死连接回收**（[HttpServer.java](file:///d:/Users/Documents/1/play/audioshare/android/app/src/main/java/com/picapico/audioshare/musiche/HttpServer.java) `sendWSMessage`）：设备休眠、WiFi 掉线、浏览器被强杀时 TCP 不走正常关闭流程，`setClosedCallback` 可能不触发。现在发送异常即视为连接死亡，先收集再 `removeAll`（避免遍历中修改列表），单个僵尸连接不会再被每 500ms 推送反复命中。
 * **UDP 发现线程自愈**（[BroadcastReceiver.java](file:///d:/Users/Documents/1/play/audioshare/android/app/src/main/java/com/picapico/audioshare/musiche/BroadcastReceiver.java)）：`receiveLoop` 外层循环重建 socket，端口被占 5s 重试、接收异常 2s 重试；只有 `stop()` 才退出，`start()` 用 `running` 标志防重复线程。原实现异常即线程死亡，UDP 抖动一次就永久失去多机发现能力。
 * **本机 IP 快照刷新**：`localAddresses` 在每个接收周期重新采样（原为构造时一次性），避免 DHCP 换 IP 后把自己的广播当成其他设备、自己连自己造成回声。
+
+### 7. 前端断线重连退避 (Reconnect Backoff)
+* **背景**：`musiche/web/src/stores/connection.ts` 原 `wsClose()` 固定 `setTimeout(..., 1000)` 永久重试。设备重启或服务未就绪时，每个标签页每秒发起一次连接，多页面叠加后是无意义的重连风暴。
+* **退避序列**：`1s → 2s → 4s → 8s → 16s → 30s`（上限），每次附带 ±20% 抖动，避免多标签页/多设备在同一毫秒集中重连；`wsOpen` 成功后计数归零。
+* **去重**：`wsRetryTimer` 存在时 `wsClose` 直接返回，`close` 重复触发不会叠加定时器。
+* **连接身份校验**：每次连接分配自增 `wsSocketId`，回调内校验 id 是否仍是当前连接。旧 socket（已超时放弃、仍在握手）迟到的 `open/close/message` 一律丢弃 —— 否则旧连接关闭会再触发一次重连，形成连接叠加。
+* **握手超时 8s**：`utils/http.ts` 的 `CommunicationClient` 新增可选 `close()`，超时未 open 则主动断开交给退避。设备休眠、AP 隔离时浏览器 TCP 可能长时间不报错，靠这个兜底。
+* **回到前台立即补连**：`visibilitychange` 检测到页面可见且未连接时，跳过退避等待直接重连（后台标签页定时器被浏览器节流，最长可能等 30s）。
+* **重连后对状态**：`wsOpen` 主动发送 `/status\n`，配合服务端 `setStringCallback` 补齐掉线期间错过的状态。
