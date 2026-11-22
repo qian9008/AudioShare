@@ -1194,13 +1194,22 @@ public class HttpServer implements AudioPlayer.OnChangedListener {
     private final AsyncHttpServer.WebSocketRequestCallback serverWebsocketHandler = (webSocket, request) -> this.onRemoteServerSocket(webSocket);
 
     public void sendWSMessage(String message){
+        List<WebSocket> dead = null;
         synchronized (mWebClientsLock){
             for (WebSocket socket: mWebClients) {
                 try {
                     socket.send(message);
                 }catch (Exception e){
-                    Log.e(TAG, "send websocket msg error", e);
+                    // 发送失败基本等于连接已死（设备休眠/断网/浏览器被强杀，TCP 不走正常关闭流程，
+                    // 关闭回调可能不触发）。留着会在之后每 500ms 的推送里反复抛异常并缓慢泄漏，
+                    // 这里直接摘除，先收集再删，避免遍历中修改列表。
+                    if (dead == null) dead = new ArrayList<>();
+                    dead.add(socket);
                 }
+            }
+            if (dead != null) {
+                mWebClients.removeAll(dead);
+                Log.w(TAG, "removed " + dead.size() + " dead web client(s), left " + mWebClients.size());
             }
         }
     }
