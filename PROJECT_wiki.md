@@ -73,7 +73,13 @@
 * **模板静态属性禁止出现 `://`（踩坑记录）**：`vue-tsc` 3.3.x 在生成虚拟 TS 代码时，静态 HTML 属性中的 `//`（如 `placeholder="例如: http://127.0.0.1:1080"`）会被当成行注释起始，注释掉后续生成代码，导致**整份 SFC 所有 setup 绑定**的 `.value` 推断错乱，报出几十条 `TS2551/TS2339`。写法改为 `:placeholder="'...'"` 也无效。解决：静态属性里不要写 `http://`，例如写成 `placeholder="例如 127.0.0.1:1080"`。排查此类问题时，用 `@vue/compiler-sfc` 的 `compileScript` 看 `bindings` 是否被判成 `setup-maybe-ref`，再逐块回退模板 diff 定位触发属性。
 
 
-### 6. 连接健壮性 (Connection Resilience)
+### 6a. 「我的音乐」加载性能优化 (Playlist Loading)
+* **两种运行模式的存储差异（调试必读）**：`storage.ts` 的 `setValue/getValue` 在远程模式（`useRemote=true`，如浏览器访问 `http://设备IP:8080`）下走后端 `//httpAddress/storage?key=musiche-<key>`，**不是 localStorage**；本地模式（APK/WebView 内置）才用 localStorage。key 统一带 `musiche-` 前缀。调试远程模式的登录态：`curl http://设备IP:8080/storage?key=musiche-user-info`（含真实账号 cookie）；`/config` 看 `remote` 标志。
+* **实测请求链路（CDP 抓包结论）**：SPA 内点击「我的音乐」侧边栏，`account/get`（账号校验）本应被缓存挡住——实测确认 `api.userInfo` 的 5 分钟 TTL 内存缓存生效（点击 3 次该请求 0 次）；真正每次都发的是 `user/playlist`（歌单列表），这才是"不如本地 app 流畅"的根因。**上一轮优化错了对象**（缓存账号校验没用），教训：先 CDP 抓包定位真实瓶颈，别凭代码猜测。
+* **歌单秒开缓存方案**（`recommend.vue` + `storage.ts` 的 `StorageKey.PlaylistCache`）：首次进入先读缓存立即显示（`loading` 不挡列表），后台拉新数据到齐后整体替换并更新缓存；缓存只存首页（offset=0），滚动分页（offset>0）不读不写、从 `playlist.length` 继续拉；只在成功时写缓存，失败保留旧缓存。**CDP 调试技巧**：无头 Chrome + `--remote-debugging-port`，用 CDP `Network.requestWillBeSent` 统计 postData 含 `account/get`/`user/playlist` 的请求；侧边栏菜单项是 `onClick` 跳转的 `<li>/<span>`，不是 `<a href>`，需用 `Input.dispatchMouseEvent` 按坐标真实点击。
+* **局限**：冷启动首次进入无缓存仍需等网络。要做到官方 app 那样的离线体验需更进一步（缓存封面图片 + 整个歌单持久化 + 后台增量同步），当前方案只优化"再次进入"的切换流畅度。
+
+### 7. 连接健壮性 (Connection Resilience)
 * **网页 WebSocket 死连接回收**（[HttpServer.java](file:///d:/Users/Documents/1/play/audioshare/android/app/src/main/java/com/picapico/audioshare/musiche/HttpServer.java) `sendWSMessage`）：设备休眠、WiFi 掉线、浏览器被强杀时 TCP 不走正常关闭流程，`setClosedCallback` 可能不触发。现在发送异常即视为连接死亡，先收集再 `removeAll`（避免遍历中修改列表），单个僵尸连接不会再被每 500ms 推送反复命中。
 * **UDP 发现线程自愈**（[BroadcastReceiver.java](file:///d:/Users/Documents/1/play/audioshare/android/app/src/main/java/com/picapico/audioshare/musiche/BroadcastReceiver.java)）：`receiveLoop` 外层循环重建 socket，端口被占 5s 重试、接收异常 2s 重试；只有 `stop()` 才退出，`start()` 用 `running` 标志防重复线程。原实现异常即线程死亡，UDP 抖动一次就永久失去多机发现能力。
 * **本机 IP 快照刷新**：`localAddresses` 在每个接收周期重新采样（原为构造时一次性），避免 DHCP 换 IP 后把自己的广播当成其他设备、自己连自己造成回声。
