@@ -956,7 +956,7 @@ public class HttpServer implements AudioPlayer.OnChangedListener {
 
     private void streamProxyBody(final InputStream is, final HttpURLConnection conn,
                                  final AsyncHttpServerResponse response, final String urlStr) {
-        final Object[] endGuard = {false};
+        final boolean[] endGuard = {false};
         final Runnable endOnce = () -> {
             synchronized (endGuard) {
                 if (endGuard[0]) return;
