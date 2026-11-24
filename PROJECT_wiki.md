@@ -111,3 +111,12 @@
 * `release.yml` 增加 `workflow_dispatch`：在 GitHub Actions 页面点 "Run workflow" 即可手动编译，无需 push 提交。
 * 触发后行为与自动构建一致：跑在 `master` 上更新 `dev-build` 预发布版；只有 push `v*.*.*` tag 才出正式 Release。Release 说明里的 `head_commit` 字段已有兜底，手动触发不会报错。
 * 用途：前端子库更新后立刻重编 APK、验证 CI 配置改动，不必制造空提交。
+
+### 10. 代理转发阻塞事件循环导致 8090 假死（严重故障）
+* **现象**：运行一段时间后 `http://设备IP:8090/` 打不开，`/config` 等接口 5s 超时 0 字节；播放器仍在响（ExoPlayer/AudioTrack 是独立线程），但网页控制与状态推送全部失效。
+* **定位方法（adb）**：`debuggerd -b` + `su -c 'kill -3'` 抓 ART 线程栈，发现唯一事件循环线程 `AsyncServer` 卡在：
+  `AsyncServer.runLoop → Util$2.onWriteable(Util.java:91) → OkHttp FixedLengthSource.read → SSLInputStream.read → NativeCrypto.SSL_read`。
+  `/proc/net/tcp6` 显示请求头停留在内核接收队列应用层未读，连接停在 CLOSE_WAIT。
+* **根因**：`executeProxy` 用 `com.koushikdutta.async.Util.pump(is, response, ...)` 转发源站响应体，而 `Util.pump` 的 `onWriteable()` 是在 AsyncServer 事件循环线程里直接调用阻塞的 `is.read()`。某个 HTTPS 源站假死不返回数据时，`SSL_read` 永久阻塞事件循环——8090 的所有 HTTP/WebSocket 都靠这一个线程，于是整体停摆。`HttpURLConnection.setReadTimeout(15000)` 对已建连的 native SSL 读不生效，挡不住。
+* **修复**（[HttpServer.java](file:///d:/Users/Documents/1/play/audioshare/android/app/src/main/java/com/picapico/audioshare/musiche/HttpServer.java) `streamProxyBody`）：阻塞的 `is.read()` 保持在 `executeProxy` 的后台线程；读到的数据块通过 `AsyncServer.getDefault().run(...)` 同步切回事件循环写 response（run 内部 semaphore 提供背压，避免无界堆积）；`response.end()` 同样切回事件循环，并用 `endOnce` 保证只调一次。另加 30s 看门狗线程，超时强制 `conn.disconnect()` 打断假死的 read，降级为空响应而非永久挂起。
+* **备份恢复手段**：`adb shell "su -c 'am force-stop com.picapico.audioshare'"` 再 `am start -n com.picapico.audioshare/.MainActivity`，重启后 HTTP 立即恢复（实测首字节 11ms）。

@@ -10,6 +10,7 @@ import android.os.Build;
 import android.util.Log;
 
 import com.koushikdutta.async.AsyncNetworkSocket;
+import com.koushikdutta.async.AsyncServer;
 import com.koushikdutta.async.ByteBufferList;
 import com.koushikdutta.async.http.AsyncHttpClient;
 import com.koushikdutta.async.http.AsyncHttpResponse;
@@ -920,19 +921,16 @@ public class HttpServer implements AudioPlayer.OnChangedListener {
             if (is != null) {
                 final InputStream finalIs = is;
                 final HttpURLConnection finalConn = conn;
-                com.koushikdutta.async.Util.pump(is, response, new com.koushikdutta.async.callback.CompletedCallback() {
-                    @Override
-                    public void onCompleted(Exception ex) {
-                        try {
-                            finalIs.close();
-                            finalConn.disconnect();
-                        } catch (Exception ignored) {}
-                        response.end();
-                    }
-                });
+                // AsyncServer 的事件循环线程是 8090 上所有 HTTP/WebSocket 的唯一处理线程。
+                // Util.pump 会在该线程里直接调用 is.read()，一旦 HTTPS 源站假死，SSL_read
+                // 会永久阻塞事件循环，导致整个服务（页面/状态推送）停摆。
+                // 这里改为：阻塞的 is.read() 留在当前后台线程，读到的数据块通过
+                // AsyncServer.getDefault().run() 同步切回事件循环写 response（带背压），
+                // 并用看门狗在总超时后强制 disconnect 打断假死的 read。
+                streamProxyBody(finalIs, finalConn, response, urlStr);
             } else {
                 conn.disconnect();
-                response.end();
+                AsyncServer.getDefault().run(response::end);
             }
 
         } catch (Exception e) {
@@ -941,7 +939,72 @@ public class HttpServer implements AudioPlayer.OnChangedListener {
                 if (is != null) is.close();
                 if (conn != null) conn.disconnect();
             } catch (Exception ignored) {}
-            response.end();
+            final AsyncHttpServerResponse finalResponse = response;
+            AsyncServer.getDefault().run(() -> {
+                try { finalResponse.end(); } catch (Exception ignored) {}
+            });
+        }
+    }
+
+    /**
+     * 在后台线程读取源站响应体并分块写回，避免阻塞 AsyncServer 事件循环线程。
+     * is.read() 保持在调用方后台线程；每读一块用 AsyncServer.run() 同步切回事件循环写出，
+     * run() 内部的 semaphore 天然形成背压（写完成前后台线程阻塞，不会无界堆积）。
+     */
+    private static final int PROXY_BODY_TIMEOUT_MS = 30000;
+    private static final int PROXY_CHUNK_SIZE = 16 * 1024;
+
+    private void streamProxyBody(final InputStream is, final HttpURLConnection conn,
+                                 final AsyncHttpServerResponse response, final String urlStr) {
+        final Object[] endGuard = {false};
+        final Runnable endOnce = () -> {
+            synchronized (endGuard) {
+                if (endGuard[0]) return;
+                endGuard[0] = true;
+            }
+            try { response.end(); } catch (Exception ignored) {}
+        };
+        // 看门狗：总超时后强制断开源站连接，打断可能假死在 SSL_read 的后台线程
+        final Thread watchdog = new Thread(() -> {
+            try {
+                Thread.sleep(PROXY_BODY_TIMEOUT_MS);
+            } catch (InterruptedException ignored) {
+                return;
+            }
+            if (endGuard[0]) return;
+            Log.w(TAG, "proxy body timeout, force disconnect: " + urlStr);
+            try { conn.disconnect(); } catch (Exception ignored) {}
+            try { is.close(); } catch (Exception ignored) {}
+        }, "proxy-watchdog");
+        watchdog.setDaemon(true);
+        watchdog.start();
+
+        byte[] buf = new byte[PROXY_CHUNK_SIZE];
+        try {
+            int len;
+            while ((len = is.read(buf)) != -1) {
+                if (endGuard[0]) break;
+                final byte[] chunk = new byte[len];
+                System.arraycopy(buf, 0, chunk, 0, len);
+                // 同步切回事件循环写；写完才返回，形成背压
+                AsyncServer.getDefault().run(() -> {
+                    try {
+                        response.write(new ByteBufferList(chunk));
+                    } catch (Exception e) {
+                        Log.e(TAG, "proxy write chunk error", e);
+                        endGuard[0] = true;
+                        try { conn.disconnect(); } catch (Exception ignored) {}
+                    }
+                });
+            }
+        } catch (Exception e) {
+            if (!endGuard[0]) Log.e(TAG, "proxy read body error: " + urlStr, e);
+        } finally {
+            watchdog.interrupt();
+            try { is.close(); } catch (Exception ignored) {}
+            try { conn.disconnect(); } catch (Exception ignored) {}
+            // end 必须在事件循环线程执行
+            AsyncServer.getDefault().run(endOnce);
         }
     }
 
